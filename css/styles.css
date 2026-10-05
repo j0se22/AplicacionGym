@@ -63,6 +63,7 @@ main {
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .row.between { justify-content: space-between; }
 .grow { flex: 1; min-width: 0; }
+select { max-width: 100%; text-overflow: ellipsis; }
 .muted { color: var(--muted); font-size: .88rem; }
 .small { font-size: .8rem; }
 
@@ -134,7 +135,8 @@ ul.list li.done .name { text-decoration: line-through; color: var(--muted); }
 .chip button { border: 0; background: none; padding: 0 2px; color: var(--muted); }
 
 .week { display: grid; gap: 8px; }
-.week .day { display: grid; grid-template-columns: 7.5em 1fr; align-items: center; gap: 8px; }
+.week .day { display: grid; grid-template-columns: 6.5em minmax(0, 1fr); align-items: center; gap: 8px; }
+.week .day .row { flex-wrap: nowrap; }
 
 table { width: 100%; border-collapse: collapse; font-size: .82rem; }
 th, td { text-align: left; padding: 6px 3px; border-bottom: 1px solid var(--border); }
@@ -142,7 +144,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 .tabs {
   position: fixed; bottom: 0; left: 0; right: 0; z-index: 5;
-  display: grid; grid-template-columns: repeat(5, 1fr);
+  display: grid; grid-template-columns: repeat(6, 1fr);
   background: var(--card); border-top: 1px solid var(--border);
   padding-bottom: env(safe-area-inset-bottom);
 }
@@ -193,3 +195,21 @@ label.check { flex-direction: row; align-items: center; gap: 8px; margin: 8px 0;
 .diet-add { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
 .diet-add select[data-dnew="food"] { flex: 1 1 140px; }
 .diet-add input { width: 5em; }
+
+.badge.phase { background: var(--text); color: var(--card); }
+.notice {
+  background: color-mix(in srgb, var(--accent) 10%, var(--card));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 10px; padding: 10px 12px; margin: 0 0 14px; font-size: .88rem;
+}
+.card .notice { margin: 8px 0; }
+.notice.warn { background: color-mix(in srgb, var(--c) 14%, var(--card)); border-color: color-mix(in srgb, var(--c) 50%, transparent); }
+.notice.ok { background: color-mix(in srgb, var(--f) 14%, var(--card)); border-color: color-mix(in srgb, var(--f) 50%, transparent); }
+.chart { width: 100%; height: auto; margin-top: 8px; }
+.chart .trend { fill: none; stroke: var(--accent); stroke-width: 2.2; stroke-linejoin: round; }
+.chart .dot-w { fill: var(--muted); opacity: .7; }
+.chart .grid { stroke: var(--border); stroke-dasharray: 3 3; }
+.chart .phase-line { stroke: var(--c); stroke-dasharray: 2 3; }
+.chart .axis { fill: var(--muted); font-size: 9px; }
+input[type="date"] { min-height: 40px; }
+.tabs button span { font-size: .64rem; }
