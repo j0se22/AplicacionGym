@@ -111,7 +111,12 @@ export function defaultState() {
   }
   return {
     version: 1,
-    profile: { weight: 75 },
+    profile: {
+      weight: 75, sex: 'h', age: 30, height: 175, activity: 1.55,
+      maintAdjust: 0, // corrección del mantenimiento (kcal/día) calculada con tus datos reales
+    },
+    phases: [], // historial de fases: volumen, definición...
+    body: {}, // { 'YYYY-MM-DD': { w, waist, bf } }
     types,
     // 0 = domingo ... 6 = sábado
     weekPlan: { 0: 'descanso', 1: 'empuje', 2: 'tiron', 3: 'pierna', 4: 'cardio', 5: 'full', 6: 'descanso' },
@@ -202,11 +207,12 @@ export function ensureLog(state, key) {
 export function daySummary(state, key) {
   const type = findType(state, typeIdForDate(state, key));
   const log = getLog(state, key);
-  const weight = log.weight ?? state.profile.weight;
   return {
     key,
     type,
-    target: targetsFor(type, weight),
+    phase: phaseFor(state, key),
+    weight: weightFor(state, key),
+    target: dayTargets(state, type, key),
     eaten: totals(log.entries),
     exercisesDone: log.exercises.filter((e) => e.done).length,
     exercisesTotal: log.exercises.length,
@@ -224,7 +230,14 @@ export function normalizeState(raw) {
     weekPlan: { ...base.weekPlan, ...(raw.weekPlan || {}) },
     foods: Array.isArray(raw.foods) ? raw.foods : base.foods,
     logs: raw.logs && typeof raw.logs === 'object' ? raw.logs : {},
+    phases: Array.isArray(raw.phases) ? raw.phases.filter((ph) => GOALS[ph?.goal] && ph.start) : [],
+    body: raw.body && typeof raw.body === 'object' ? { ...raw.body } : {},
   };
+  for (const [k, l] of Object.entries(s.logs)) {
+    if (l && Number(l.weight) > 0 && !s.body[k]?.w) s.body[k] = { ...(s.body[k] || {}), w: Number(l.weight) };
+    if (l) delete l.weight;
+  }
+  s.phases.sort((a, b) => a.start.localeCompare(b.start));
   s.types = s.types.map((t) => ({
     id: t.id || uid(),
     name: String(t.name || 'Sin nombre'),
@@ -322,9 +335,8 @@ export function dietForDay(state, key) {
 }
 
 function dietSignature(state, key) {
-  const type = findType(state, typeIdForDate(state, key));
-  const log = getLog(state, key);
-  return JSON.stringify([type?.id, log.weight ?? state.profile.weight, type?.perKg, type?.autoScale, type?.diet]);
+  const { type, target } = daySummary(state, key);
+  return JSON.stringify([type?.id, target, type?.autoScale, type?.diet]);
 }
 
 // Pone (o recalcula) la dieta del día, conservando las comidas añadidas a mano.
@@ -367,4 +379,265 @@ export function syncDiet(state, key, today = dateKey()) {
     return true;
   }
   return false;
+}
+
+// ---------- Fases (objetivos) ----------
+// Valores basados en la evidencia:
+//  - Volumen: superávit ~10-20 % y ganar ~0,25-0,5 % del peso/semana; proteína 1,6-2,2 g/kg;
+//    grasa 0,5-1,5 g/kg; resto carbohidratos (Iraki et al., 2019).
+//  - Definición: perder ~0,5-1 % del peso/semana; proteína alta (2,3-3,1 g/kg de masa magra);
+//    grasa 15-30 % de las kcal (Helms et al., 2014; ISSN 2017).
+//  - Proteína >1,6 g/kg apenas aporta más músculo en mantenimiento/superávit (Morton et al., 2018).
+export const GOALS = {
+  mantenimiento: {
+    name: 'Mantenimiento', kcalPct: 0, protein: 1.8, minFat: 0.7, rate: 0,
+    desc: 'Mantener el peso. Ideal entre fases o para centrarse en el rendimiento.',
+  },
+  volumen_limpio: {
+    name: 'Volumen limpio', kcalPct: 8, protein: 1.8, minFat: 0.7, rate: 0.25,
+    desc: 'Superávit pequeño para ganar músculo acumulando poca grasa. Recomendado si ya tienes experiencia.',
+  },
+  volumen: {
+    name: 'Volumen', kcalPct: 15, protein: 1.8, minFat: 0.7, rate: 0.5,
+    desc: 'Superávit moderado para ganar músculo más rápido. Recomendado para principiantes o si estás delgado.',
+  },
+  definicion: {
+    name: 'Definición', kcalPct: -20, protein: 2.3, minFat: 0.6, rate: -0.7,
+    desc: 'Déficit para perder grasa manteniendo el músculo. Proteína alta y no bajes de 0,5-1 %/semana.',
+  },
+  minicut: {
+    name: 'Mini-cut', kcalPct: -30, protein: 2.5, minFat: 0.5, rate: -1, maxWeeks: 6,
+    desc: 'Déficit agresivo y corto (2-6 semanas) para quitar grasa acumulada en un volumen.',
+  },
+  recomposicion: {
+    name: 'Recomposición', kcalPct: -5, protein: 2.2, minFat: 0.7, rate: 0,
+    desc: 'Ganar músculo y perder grasa a la vez manteniendo el peso. Funciona mejor en principiantes o tras un parón.',
+  },
+  descanso_dieta: {
+    name: 'Descanso de dieta', kcalPct: 0, protein: 2.0, minFat: 0.7, rate: 0, maxWeeks: 2,
+    desc: '1-2 semanas en mantenimiento durante una definición larga para recuperar energía y adherencia.',
+  },
+};
+
+const DEFAULT_PHASE = { id: 'default', goal: 'mantenimiento', start: '0000-01-01', ...GOALS.mantenimiento };
+
+export function newPhase(goal, start, extra = {}) {
+  const g = GOALS[goal];
+  return {
+    id: uid(), goal, start,
+    kcalPct: g.kcalPct, protein: g.protein, minFat: g.minFat, rate: g.rate,
+    targetWeight: null, ...extra,
+  };
+}
+
+export function phaseFor(state, key) {
+  let found = null;
+  for (const ph of state.phases || []) if (ph.start <= key) found = ph;
+  return found || DEFAULT_PHASE;
+}
+
+export function phaseName(ph) {
+  return GOALS[ph.goal]?.name ?? ph.goal;
+}
+
+export function weeksInPhase(ph, key) {
+  if (ph.id === 'default') return 0;
+  return Math.floor((parseKey(key) - parseKey(ph.start)) / (7 * 864e5));
+}
+
+// ---------- Peso y tendencia ----------
+
+export const KCAL_PER_KG = 7700;
+
+export function bodyEntries(state) {
+  return Object.entries(state.body || {})
+    .filter(([, b]) => Number(b?.w) > 0)
+    .sort(([a], [b]) => a.localeCompare(b));
+}
+
+// Media móvil exponencial (α = 0,1 por día): suaviza agua, sal, digestión...
+export function weightTrend(state, until = dateKey()) {
+  const entries = bodyEntries(state);
+  if (!entries.length) return [];
+  const byKey = Object.fromEntries(entries);
+  const out = [];
+  let trend = null;
+  const last = entries[entries.length - 1][0] > until ? entries[entries.length - 1][0] : until;
+  for (let k = entries[0][0]; k <= last; k = addDays(k, 1)) {
+    const w = byKey[k]?.w ? Number(byKey[k].w) : null;
+    if (w != null) trend = trend == null ? w : trend + 0.1 * (w - trend);
+    out.push({ key: k, weight: w, trend: round(trend, 2) });
+  }
+  return out;
+}
+
+// Peso a usar para los objetivos de un día: tendencia en esa fecha, o el del perfil.
+export function weightFor(state, key) {
+  const series = weightTrend(state, key);
+  const point = [...series].reverse().find((d) => d.key <= key);
+  return point ? round(point.trend, 1) : Number(state.profile.weight) || 0;
+}
+
+// Pendiente (kg/semana) por regresión lineal de los pesos de los últimos `days` días.
+export function weightRate(state, until = dateKey(), days = 21) {
+  const from = addDays(until, -days);
+  const pts = bodyEntries(state).filter(([k]) => k > from && k <= until)
+    .map(([k, b]) => [(parseKey(k) - parseKey(from)) / 864e5, Number(b.w)]);
+  if (pts.length < 4 || pts[pts.length - 1][0] - pts[0][0] < 7) return null;
+  const n = pts.length;
+  const mx = pts.reduce((a, [x]) => a + x, 0) / n;
+  const my = pts.reduce((a, [, y]) => a + y, 0) / n;
+  const num = pts.reduce((a, [x, y]) => a + (x - mx) * (y - my), 0);
+  const den = pts.reduce((a, [x]) => a + (x - mx) ** 2, 0);
+  const perDay = den ? num / den : 0;
+  return { kgWeek: round(perDay * 7, 2), pctWeek: round((perDay * 7 / my) * 100, 2), points: n };
+}
+
+// ---------- Objetivos del día ----------
+
+// Mifflin-St Jeor × factor de actividad.
+export function estimateMaintenance(profile) {
+  const { weight = 0, height = 0, age = 0, sex = 'h', activity = 1.55 } = profile;
+  const bmr = 10 * weight + 6.25 * height - 5 * age + (sex === 'm' ? -161 : 5);
+  return round(bmr * activity);
+}
+
+// Kcal base media de la semana según el plan de entrenos (= tu mantenimiento previsto).
+export function weeklyBaseKcal(state, weight = state.profile.weight) {
+  let sum = 0;
+  for (let d = 0; d < 7; d++) sum += targetsFor(findType(state, state.weekPlan[d]), weight).kcal;
+  return round(sum / 7);
+}
+
+// Macros del día: base del tipo de entreno (mantenimiento) + corrección de mantenimiento,
+// y después la fase: ±% de kcal, proteína mínima y grasa mínima; el resto se reparte entre
+// carbohidratos y grasas en la misma proporción que la base (conserva el ciclado de carbos).
+export function dayTargets(state, type, key, phase = phaseFor(state, key)) {
+  if (!type) return { p: 0, c: 0, f: 0, kcal: 0 };
+  const w = weightFor(state, key);
+  const base = targetsFor(type, w);
+  const maint = Math.max(0, base.kcal + (Number(state.profile.maintAdjust) || 0));
+  const kcalT = maint * (1 + (Number(phase.kcalPct) || 0) / 100);
+  const p = Math.max(base.p, (Number(phase.protein) || 0) * w);
+  const rest = Math.max(0, kcalT - 4 * p);
+  const cK = 4 * base.c;
+  const fK = 9 * base.f;
+  const fatShare = cK + fK > 0 ? fK / (cK + fK) : 0.3;
+  const f = Math.max((rest * fatShare) / 9, (Number(phase.minFat) || 0) * w);
+  const c = Math.max(0, (rest - 9 * f) / 4);
+  const t = { p: round(p), c: round(c), f: round(f) };
+  t.kcal = round(kcal(t));
+  return t;
+}
+
+// Recalcula los g/kg de carbos y grasas de todos los entrenos para que la media semanal
+// coincida con `maintenance` (la proteína no cambia).
+export function calibrateTypes(state, maintenance, weight = state.profile.weight) {
+  let sumP = 0;
+  let sumCF = 0;
+  for (let d = 0; d < 7; d++) {
+    const t = targetsFor(findType(state, state.weekPlan[d]), weight);
+    sumP += 4 * t.p;
+    sumCF += 4 * t.c + 9 * t.f;
+  }
+  if (!(sumCF > 0)) return 1;
+  const k = (7 * maintenance - sumP) / sumCF;
+  for (const t of state.types) {
+    t.perKg.c = round(Math.max(0, t.perKg.c * k), 1);
+    t.perKg.f = round(Math.max(0.3, t.perKg.f * k), 2);
+  }
+  state.profile.maintAdjust = 0;
+  return k;
+}
+
+// Mantenimiento real estimado con tu ingesta registrada y la evolución de tu peso
+// (como hacen las apps "adaptativas"): mantenimiento ≈ ingesta media − cambio de peso × 7700.
+export function adaptiveCheck(state, until = dateKey(), days = 21) {
+  const rate = weightRate(state, until, days);
+  if (!rate) return { ready: false, reason: 'Necesito al menos 4 pesajes repartidos en 7 días o más.' };
+  const logged = [];
+  for (let i = 1; i <= days; i++) {
+    const k = addDays(until, -i);
+    const l = state.logs[k];
+    if (l?.entries?.length) logged.push(k);
+  }
+  if (logged.length < 10) {
+    return { ready: false, rate, reason: `Necesito al menos 10 días con comidas registradas (llevas ${logged.length}).` };
+  }
+  const intake = logged.reduce((a, k) => a + totals(state.logs[k].entries).kcal, 0) / logged.length;
+  const planned = logged.reduce((a, k) => {
+    const type = findType(state, typeIdForDate(state, k));
+    return a + targetsFor(type, weightFor(state, k)).kcal + (Number(state.profile.maintAdjust) || 0);
+  }, 0) / logged.length;
+  const realMaint = intake - (rate.kgWeek / 7) * KCAL_PER_KG;
+  const correction = Math.max(-500, Math.min(500, realMaint - planned));
+  return {
+    ready: true,
+    rate,
+    intake: round(intake),
+    planned: round(planned),
+    realMaint: round(realMaint),
+    correction: Math.round(correction / 50) * 50,
+    days: logged.length,
+  };
+}
+
+// Valora el ritmo frente al objetivo de la fase.
+export function rateStatus(phase, rate) {
+  if (!rate) return null;
+  const target = Number(phase.rate) || 0;
+  const diff = rate.pctWeek - target;
+  const tol = Math.max(0.15, Math.abs(target) * 0.35);
+  if (Math.abs(diff) <= tol) return { level: 'ok', text: 'Vas al ritmo previsto.' };
+  if (target < 0) {
+    return diff < 0
+      ? { level: 'warn', text: 'Estás perdiendo peso más rápido de lo recomendado: riesgo de perder músculo.' }
+      : { level: 'warn', text: 'Pierdes peso más despacio de lo previsto.' };
+  }
+  if (target > 0) {
+    return diff > 0
+      ? { level: 'warn', text: 'Estás ganando peso más rápido de lo previsto: probablemente acumulando grasa extra.' }
+      : { level: 'warn', text: 'Ganas peso más despacio de lo previsto.' };
+  }
+  return { level: 'warn', text: diff > 0 ? 'Estás subiendo de peso.' : 'Estás bajando de peso.' };
+}
+
+// Avisos de la fase actual (descansos de dieta, duración, peso objetivo...).
+export function phaseAdvice(state, key = dateKey()) {
+  const ph = phaseFor(state, key);
+  const weeks = weeksInPhase(ph, key);
+  const out = [];
+  const g = GOALS[ph.goal];
+  if (g?.maxWeeks && weeks >= g.maxWeeks) {
+    out.push(`Llevas ${weeks} semanas en ${g.name}; se recomienda un máximo de ${g.maxWeeks}. Plantéate cambiar de fase.`);
+  }
+  if (ph.goal === 'definicion' && weeks >= 10) {
+    out.push(`Llevas ${weeks} semanas en definición. Un descanso de dieta de 1-2 semanas en mantenimiento ayuda a recuperar energía, rendimiento y adherencia.`);
+  }
+  if ((ph.goal === 'volumen' || ph.goal === 'volumen_limpio') && weeks >= 20) {
+    out.push(`Llevas ${weeks} semanas de volumen. Si has acumulado bastante grasa, valora un mini-cut o una definición.`);
+  }
+  const tw = Number(ph.targetWeight);
+  if (tw > 0) {
+    const w = weightFor(state, key);
+    const reached = (ph.rate < 0 && w <= tw) || (ph.rate > 0 && w >= tw);
+    if (reached) out.push(`¡Has llegado a tu peso objetivo (${tw} kg)! Valora pasar a mantenimiento.`);
+  }
+  return out;
+}
+
+// ---------- Ejercicios: sobrecarga progresiva ----------
+
+export function lastExercise(state, name, beforeKey) {
+  const keys = Object.keys(state.logs).filter((k) => k < beforeKey).sort().reverse();
+  for (const k of keys) {
+    const x = state.logs[k].exercises?.find((e) => e.name === name && (e.kg !== '' || e.reps !== '' || e.sets !== ''));
+    if (x) return { key: k, sets: x.sets, reps: x.reps, kg: x.kg };
+  }
+  return null;
+}
+
+// Agua recomendada: ~35 ml por kg de peso (más si sudas mucho).
+export function waterTarget(weight) {
+  return Math.round((weight * 35) / 250) * 250;
 }

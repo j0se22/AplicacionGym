@@ -2,6 +2,9 @@ import {
   STORAGE_KEY, WEEKDAYS, uid, round, kcal, targetsFor, totals, dateKey, parseKey, addDays,
   findType, typeIdForDate, getLog, ensureLog, daySummary, normalizeState, defaultState,
   MEALS, amountLabel, syncDiet, applyDiet, removeDiet, dietItem, defaultDiet, scaleDiet,
+  GOALS, newPhase, phaseFor, phaseName, weeksInPhase, dayTargets, weightFor, weightTrend, weightRate,
+  estimateMaintenance, weeklyBaseKcal, calibrateTypes, adaptiveCheck, rateStatus, phaseAdvice,
+  lastExercise, waterTarget, bodyEntries,
 } from './core.js';
 
 // ---------- Estado y persistencia ----------
@@ -116,8 +119,12 @@ function renderDay() {
   const typeId = typeIdForDate(state, key);
   const type = findType(state, typeId);
   const plannedId = state.weekPlan[parseKey(key).getDay()];
-  const { target, eaten } = daySummary(state, key);
+  const { target, eaten, phase, weight } = daySummary(state, key);
   const isToday = key === dateKey();
+  const bodyToday = state.body[key] || {};
+  const advice = isToday ? phaseAdvice(state, key) : [];
+  const water = Number(log.water) || 0;
+  const waterGoal = waterTarget(weight);
 
   const hasDiet = log.entries.some((e) => e.diet);
   const dietNote = hasDiet
@@ -136,6 +143,7 @@ function renderDay() {
       <input type="checkbox" data-action="toggle-ex" data-i="${i}" ${x.done ? 'checked' : ''} aria-label="Hecho">
       <div class="grow">
         <div class="name">${esc(x.name)}</div>
+        ${lastHint(x.name, key)}
         <div class="ex-sets">
           <input type="number" min="0" inputmode="numeric" placeholder="series" value="${esc(x.sets ?? '')}" data-field="sets" data-i="${i}" aria-label="Series">×
           <input type="number" min="0" inputmode="numeric" placeholder="reps" value="${esc(x.reps ?? '')}" data-field="reps" data-i="${i}" aria-label="Repeticiones">
@@ -164,21 +172,23 @@ function renderDay() {
         <label class="grow">Tipo de entrenamiento
           <select data-action="set-day-type">${typeOptions(typeId)}</select>
         </label>
-        <label>Peso (kg)
-          <input type="number" min="20" step="0.1" inputmode="decimal" value="${esc(log.weight ?? state.profile.weight)}" data-action="set-day-weight">
+        <label>Peso en ayunas
+          <input type="number" min="20" step="0.1" inputmode="decimal" placeholder="${esc(weight)}" value="${esc(bodyToday.w ?? '')}" data-action="set-day-weight" aria-label="Peso en ayunas (kg)">
         </label>
       </div>
       <p class="muted small">
         ${log.typeId && log.typeId !== plannedId
           ? `Cambiado manualmente (el plan semanal decía ${esc(findType(state, plannedId)?.name ?? '—')}). <button class="icon small" data-action="reset-day-type">Volver al plan</button>`
           : 'Según tu plan semanal.'}
+        · Peso de referencia (tendencia): <b>${esc(weight)} kg</b>
       </p>
     </section>
+    ${advice.map((a) => `<div class="notice">💡 ${esc(a)}</div>`).join('')}
 
     <section class="card">
       <div class="row between">
         <h2>Macros del día</h2>
-        ${typeBadge(type)}
+        <div class="row" style="gap:4px;justify-content:flex-end">${phaseBadge(phase)}${typeBadge(type)}</div>
       </div>
       <div class="row between" style="margin-bottom:10px">
         <div><span class="kcal-big">${eaten.kcal}</span> <span class="muted">/ ${target.kcal} kcal</span></div>
@@ -203,6 +213,19 @@ function renderDay() {
 
     <section class="card">
       <div class="row between">
+        <h2>💧 Agua</h2>
+        <span><b>${round(water / 1000, 2)}</b> / ${round(waterGoal / 1000, 2)} L</span>
+      </div>
+      <div class="bar" style="margin:8px 0"><i style="width:${Math.min(100, (water / waterGoal) * 100)}%;background:#4cc9f0"></i></div>
+      <div class="row">
+        <button data-action="water" data-ml="250">+ Vaso (250 ml)</button>
+        <button data-action="water" data-ml="500">+ 500 ml</button>
+        <button class="icon" data-action="water" data-ml="-250" ${water ? '' : 'disabled'} aria-label="Quitar 250 ml">−</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="row between">
         <h2>Ejercicios</h2>
         <button data-action="load-routine" ${type?.exercises.length ? '' : 'disabled'}>Cargar rutina de ${esc(type?.name ?? '')}</button>
       </div>
@@ -215,6 +238,19 @@ function renderDay() {
     </section>`;
 }
 
+function lastHint(name, key) {
+  const l = lastExercise(state, name, key);
+  if (!l) return '';
+  const parts = [l.sets && l.reps ? `${l.sets}×${l.reps}` : l.reps ? `${l.reps} reps` : '', l.kg !== '' ? `${l.kg} kg` : ''].filter(Boolean);
+  return `<div class="muted small">Última vez (${esc(fmtShort(l.key))}): ${esc(parts.join(' · ') || '—')}. ¡Intenta superarla!</div>`;
+}
+
+function phaseBadge(ph) {
+  const pct = Number(ph.kcalPct) || 0;
+  const sign = pct > 0 ? '+' : pct < 0 ? '−' : '±';
+  return `<span class="badge phase">${esc(phaseName(ph))} ${sign}${Math.abs(pct)}%</span>`;
+}
+
 function allExerciseNames() {
   return [...new Set(state.types.flatMap((t) => t.exercises))].sort((a, b) => a.localeCompare(b, 'es'));
 }
@@ -222,11 +258,14 @@ function allExerciseNames() {
 // ---------- Vista: Semana ----------
 
 function renderWeek() {
-  const order = [1, 2, 3, 4, 5, 6, 0];
+  const today = dateKey();
+  const monday = addDays(today, -((parseKey(today).getDay() + 6) % 7));
   let sum = 0;
-  const rows = order.map((d) => {
+  const rows = [0, 1, 2, 3, 4, 5, 6].map((i) => {
+    const k = addDays(monday, i);
+    const d = parseKey(k).getDay();
     const type = findType(state, state.weekPlan[d]);
-    const t = targetsFor(type, state.profile.weight);
+    const t = dayTargets(state, type, k);
     sum += t.kcal;
     return `
       <div class="day">
@@ -238,13 +277,14 @@ function renderWeek() {
         </div>
       </div>`;
   }).join('');
+  const ph = phaseFor(state, today);
 
   return `
     <section class="card">
       <h2>Plan semanal</h2>
-      <p class="muted">Elige qué entrenas cada día. Los objetivos de macros del día se calculan según ese tipo de entrenamiento y tu peso (${esc(state.profile.weight)} kg).</p>
+      <p class="muted">Elige qué entrenas cada día. Los macros se calculan con el tipo de entreno, tu peso (${esc(weightFor(state, today))} kg) y tu fase actual: ${phaseBadge(ph)}</p>
       <div class="week">${rows}</div>
-      <p class="muted" style="margin-top:12px">Media semanal: <b>${round(sum / 7)} kcal/día</b></p>
+      <p class="muted" style="margin-top:12px">Media esta semana: <b>${round(sum / 7)} kcal/día</b> · Mantenimiento previsto: ${weeklyBaseKcal(state, weightFor(state, today)) + (Number(state.profile.maintAdjust) || 0)} kcal/día</p>
     </section>`;
 }
 
@@ -295,9 +335,12 @@ function dietEditor(t, target) {
 }
 
 function renderTypes() {
-  const w = state.profile.weight;
+  const today = dateKey();
+  const w = weightFor(state, today);
+  const ph = phaseFor(state, today);
   const cards = state.types.map((t) => {
-    const g = targetsFor(t, w);
+    const base = targetsFor(t, w);
+    const g = dayTargets(state, t, today, ph);
     return `
       <section class="card">
         <div class="row">
@@ -305,13 +348,14 @@ function renderTypes() {
           <input class="grow" value="${esc(t.name)}" data-type="${esc(t.id)}" data-tfield="name" aria-label="Nombre">
           <button class="icon danger" data-action="del-type" data-type="${esc(t.id)}" title="Eliminar tipo">🗑</button>
         </div>
-        <h3>Macros (g por kg de peso)</h3>
+        <h3>Macros en mantenimiento (g por kg de peso)</h3>
         <div class="row">
           <label>Proteína<input type="number" min="0" step="0.1" value="${t.perKg.p}" data-type="${esc(t.id)}" data-tfield="p"></label>
           <label>Carbos<input type="number" min="0" step="0.1" value="${t.perKg.c}" data-type="${esc(t.id)}" data-tfield="c"></label>
           <label>Grasas<input type="number" min="0" step="0.1" value="${t.perKg.f}" data-type="${esc(t.id)}" data-tfield="f"></label>
         </div>
-        <p class="muted small">Con ${esc(w)} kg: P ${g.p} g · C ${g.c} g · G ${g.f} g · <b>${g.kcal} kcal</b></p>
+        <p class="muted small">Mantenimiento con ${esc(w)} kg: P ${base.p} · C ${base.c} · G ${base.f} g · ${base.kcal} kcal</p>
+        <p class="small">En tu fase (${esc(phaseName(ph))}): P ${g.p} · C ${g.c} · G ${g.f} g · <b>${g.kcal} kcal</b></p>
         ${dietEditor(t, g)}
         <h3>Ejercicios</h3>
         <div class="chips">
@@ -328,6 +372,159 @@ function renderTypes() {
     <p class="muted">Cada tipo de entrenamiento tiene sus propios objetivos de macros, su dieta por defecto y su lista de ejercicios.</p>
     ${cards}
     <button class="primary" data-action="add-type" style="width:100%">+ Nuevo tipo de entrenamiento</button>`;
+}
+
+// ---------- Vista: Progreso ----------
+
+const ACTIVITY = [
+  [1.2, 'Sedentaria (sin ejercicio)'],
+  [1.375, 'Ligera (1-3 días/semana)'],
+  [1.55, 'Moderada (3-5 días/semana)'],
+  [1.725, 'Alta (6-7 días/semana)'],
+  [1.9, 'Muy alta (doble sesión o trabajo físico)'],
+];
+
+function setBody(key, field, value) {
+  const v = Number(value);
+  const b = { ...(state.body[key] || {}) };
+  if (v > 0) b[field] = v;
+  else delete b[field];
+  if (Object.keys(b).length) state.body[key] = b;
+  else delete state.body[key];
+  if (field === 'w' && v > 0) {
+    const last = bodyEntries(state).at(-1);
+    if (last && last[0] === key) state.profile.weight = v;
+  }
+}
+
+function weightChart(series, phases) {
+  const pts = series.slice(-90);
+  if (pts.filter((d) => d.weight != null).length < 2) {
+    return '<div class="empty">Pésate varios días (mejor en ayunas, tras ir al baño) para ver la gráfica.</div>';
+  }
+  const W = 340; const H = 160; const P = 28;
+  const vals = pts.flatMap((d) => [d.weight, d.trend]).filter((v) => v != null);
+  let min = Math.min(...vals); let max = Math.max(...vals);
+  if (max - min < 1) { min -= 0.5; max += 0.5; }
+  const x = (i) => P + (i / Math.max(1, pts.length - 1)) * (W - P - 6);
+  const y = (v) => 8 + (1 - (v - min) / (max - min)) * (H - 28);
+  const line = pts.map((d, i) => (d.trend != null ? `${x(i).toFixed(1)},${y(d.trend).toFixed(1)}` : '')).filter(Boolean).join(' ');
+  const dots = pts.map((d, i) => (d.weight != null ? `<circle cx="${x(i).toFixed(1)}" cy="${y(d.weight).toFixed(1)}" r="2.4" class="dot-w"/>` : '')).join('');
+  const marks = phases.map((ph) => {
+    const i = pts.findIndex((d) => d.key === ph.start);
+    return i < 0 ? '' : `<line x1="${x(i)}" x2="${x(i)}" y1="4" y2="${H - 20}" class="phase-line"/><text x="${x(i) + 3}" y="14" class="axis">${esc(phaseName(ph))}</text>`;
+  }).join('');
+  return `
+    <svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="Evolución del peso">
+      <text x="2" y="${y(max) + 4}" class="axis">${round(max, 1)}</text>
+      <text x="2" y="${y(min) + 4}" class="axis">${round(min, 1)}</text>
+      <line x1="${P}" x2="${W}" y1="${y(max)}" y2="${y(max)}" class="grid"/>
+      <line x1="${P}" x2="${W}" y1="${y(min)}" y2="${y(min)}" class="grid"/>
+      ${marks}${dots}
+      <polyline points="${line}" class="trend"/>
+      <text x="${P}" y="${H - 4}" class="axis">${esc(fmtShort(pts[0].key))}</text>
+      <text x="${W}" y="${H - 4}" class="axis" text-anchor="end">${esc(fmtShort(pts.at(-1).key))}</text>
+    </svg>
+    <p class="muted small">Puntos: pesajes · Línea: tendencia (filtra agua, sal y digestión).</p>`;
+}
+
+function renderProgress() {
+  const today = dateKey();
+  const ph = phaseFor(state, today);
+  const goal = GOALS[ph.goal];
+  const weeks = weeksInPhase(ph, today);
+  const w = weightFor(state, today);
+  const series = weightTrend(state, today);
+  const rate = weightRate(state, today);
+  const status = rateStatus(ph, rate);
+  const adapt = adaptiveCheck(state, today);
+  const adj = Number(state.profile.maintAdjust) || 0;
+  const formula = estimateMaintenance({ ...state.profile, weight: w });
+  const planned = weeklyBaseKcal(state, w) + adj;
+  const b = state.body[today] || {};
+  const isDefault = ph.id === 'default';
+  const rateKg = round((w * (Number(ph.rate) || 0)) / 100, 2);
+  const advice = phaseAdvice(state, today);
+
+  const phaseFields = isDefault ? '' : `
+    <details class="diet">
+      <summary>Ajustes de esta fase</summary>
+      <div class="row" style="margin-top:8px">
+        <label>Kcal (%)<input type="number" step="1" value="${esc(ph.kcalPct)}" data-action="phase-field" data-id="${esc(ph.id)}" data-field="kcalPct"></label>
+        <label>Proteína g/kg<input type="number" step="0.1" min="0" value="${esc(ph.protein)}" data-action="phase-field" data-id="${esc(ph.id)}" data-field="protein"></label>
+        <label>Grasa mín. g/kg<input type="number" step="0.1" min="0" value="${esc(ph.minFat)}" data-action="phase-field" data-id="${esc(ph.id)}" data-field="minFat"></label>
+        <label>Ritmo %/sem<input type="number" step="0.05" value="${esc(ph.rate)}" data-action="phase-field" data-id="${esc(ph.id)}" data-field="rate"></label>
+        <label>Peso objetivo<input type="number" step="0.1" min="0" value="${esc(ph.targetWeight ?? '')}" placeholder="kg" data-action="phase-field" data-id="${esc(ph.id)}" data-field="targetWeight"></label>
+      </div>
+    </details>`;
+
+  const history = [...state.phases].reverse().map((p) => `
+    <li>
+      <div class="grow"><b>${esc(phaseName(p))}</b> <span class="muted small">desde ${esc(fmtShort(p.start))} · ${p.kcalPct > 0 ? '+' : ''}${esc(p.kcalPct)}% kcal${p.targetWeight ? ` · objetivo ${esc(p.targetWeight)} kg` : ''}</span></div>
+      <button class="icon danger" data-action="del-phase" data-id="${esc(p.id)}" aria-label="Borrar fase">✕</button>
+    </li>`).join('');
+
+  const recent = bodyEntries(state).slice(-8).reverse().map(([k, v]) => `
+    <tr><td>${esc(fmtShort(k))}</td><td class="num">${esc(v.w)}</td><td class="num">${esc(v.waist ?? '')}</td><td class="num">${esc(v.bf ?? '')}</td></tr>`).join('');
+
+  let adaptHtml;
+  if (!adapt.ready) {
+    adaptHtml = `<p class="muted small">${esc(adapt.reason)} Registra lo que comes y pésate casi a diario: tras 2-3 semanas la app calcula tu mantenimiento real.</p>`;
+  } else {
+    adaptHtml = `
+      <p class="small">Últimos ${adapt.days} días registrados: comes <b>${adapt.intake}</b> kcal de media y tu peso cambia <b>${adapt.rate.kgWeek > 0 ? '+' : ''}${adapt.rate.kgWeek} kg/sem</b>.
+        Tu mantenimiento real ronda <b>${adapt.realMaint} kcal</b> (la app suponía ${adapt.planned}).</p>
+      ${Math.abs(adapt.correction) >= 100
+        ? `<button class="primary" data-action="apply-adapt" data-kcal="${adapt.correction}">${adapt.correction > 0 ? 'Subir' : 'Bajar'} ${Math.abs(adapt.correction)} kcal/día mis objetivos</button>`
+        : '<p class="small">✅ Tus objetivos están bien calibrados.</p>'}`;
+  }
+
+  return `
+    <section class="card">
+      <div class="row between"><h2>Fase actual</h2>${phaseBadge(ph)}</div>
+      <p class="small">${esc(goal?.desc ?? '')}</p>
+      <p class="muted small">${isDefault ? 'No has elegido fase: se usa mantenimiento.' : `Desde el ${esc(fmtDate(ph.start))} · semana ${weeks + 1}`}
+        · Ritmo objetivo: <b>${ph.rate > 0 ? '+' : ''}${esc(ph.rate)}%/sem</b> (${rateKg > 0 ? '+' : ''}${rateKg} kg/sem)
+        · Proteína ≥ ${esc(ph.protein)} g/kg</p>
+      ${advice.map((a) => `<div class="notice">💡 ${esc(a)}</div>`).join('')}
+      ${phaseFields}
+      <h3>Cambiar de fase</h3>
+      <div class="row">
+        <select id="ph-goal" class="grow" data-action="ph-goal-preview">
+          ${Object.entries(GOALS).map(([id, g]) => `<option value="${id}" ${id === (isDefault ? 'volumen_limpio' : ph.goal) ? 'selected' : ''}>${esc(g.name)} (${g.kcalPct > 0 ? '+' : ''}${g.kcalPct}%)</option>`).join('')}
+        </select>
+      </div>
+      <p class="muted small" id="ph-desc">${esc(GOALS[isDefault ? 'volumen_limpio' : ph.goal].desc)}</p>
+      <div class="row">
+        <label>Empieza<input type="date" id="ph-start" value="${today}"></label>
+        <label>Peso objetivo (opcional)<input type="number" id="ph-target" step="0.1" min="0" placeholder="kg"></label>
+      </div>
+      <button class="primary" data-action="start-phase" style="margin-top:10px;width:100%">Empezar fase</button>
+      ${history ? `<h3>Historial de fases</h3><ul class="list">${history}</ul>` : ''}
+    </section>
+
+    <section class="card">
+      <h2>Peso y medidas</h2>
+      <div class="row">
+        <label>Peso hoy (kg)<input type="number" step="0.1" min="20" inputmode="decimal" value="${esc(b.w ?? '')}" data-action="set-body" data-field="w"></label>
+        <label>Cintura (cm)<input type="number" step="0.5" min="0" inputmode="decimal" value="${esc(b.waist ?? '')}" data-action="set-body" data-field="waist"></label>
+        <label>% grasa<input type="number" step="0.1" min="0" inputmode="decimal" value="${esc(b.bf ?? '')}" data-action="set-body" data-field="bf"></label>
+      </div>
+      <p class="small" style="margin-top:10px">Tendencia: <b>${esc(w)} kg</b>
+        ${rate ? ` · Ritmo (3 semanas): <b>${rate.kgWeek > 0 ? '+' : ''}${rate.kgWeek} kg/sem</b> (${rate.pctWeek > 0 ? '+' : ''}${rate.pctWeek}%)` : ''}</p>
+      ${status ? `<div class="notice ${status.level}">${status.level === 'ok' ? '✅' : '⚠️'} ${esc(status.text)}</div>` : ''}
+      ${weightChart(series, state.phases)}
+      ${recent ? `<h3>Últimos registros</h3><table><thead><tr><th>Fecha</th><th class="num">Peso</th><th class="num">Cintura</th><th class="num">% grasa</th></tr></thead><tbody>${recent}</tbody></table>` : ''}
+    </section>
+
+    <section class="card">
+      <h2>Tu mantenimiento</h2>
+      <p class="small">Según la fórmula (Mifflin-St Jeor): <b>${formula} kcal</b> · Según tus entrenos: <b>${planned} kcal</b>${adj ? ` (incluye ${adj > 0 ? '+' : ''}${adj} de ajuste)` : ''}</p>
+      <h3>Ajuste con tus datos reales</h3>
+      ${adaptHtml}
+      ${adj ? '<button class="small-btn" data-action="reset-adjust" style="margin-top:8px">Quitar ajuste</button>' : ''}
+      <p class="muted small">Completa tu perfil (edad, altura, actividad) en Ajustes para afinar la fórmula.</p>
+    </section>`;
 }
 
 // ---------- Vista: Historial ----------
@@ -392,10 +589,27 @@ function renderSettings() {
   return `
     <section class="card">
       <h2>Perfil</h2>
-      <label>Peso corporal por defecto (kg)
-        <input type="number" min="20" step="0.1" inputmode="decimal" value="${esc(state.profile.weight)}" data-action="set-weight">
+      <div class="row">
+        <label>Peso (kg)<input type="number" min="20" step="0.1" inputmode="decimal" value="${esc(state.profile.weight)}" data-action="set-weight"></label>
+        <label>Sexo
+          <select data-action="profile" data-field="sex">
+            <option value="h" ${state.profile.sex !== 'm' ? 'selected' : ''}>Hombre</option>
+            <option value="m" ${state.profile.sex === 'm' ? 'selected' : ''}>Mujer</option>
+          </select>
+        </label>
+        <label>Edad<input type="number" min="10" max="100" value="${esc(state.profile.age)}" data-action="profile" data-field="age"></label>
+        <label>Altura (cm)<input type="number" min="100" max="250" value="${esc(state.profile.height)}" data-action="profile" data-field="height"></label>
+      </div>
+      <label style="margin-top:8px">Actividad
+        <select data-action="profile" data-field="activity">
+          ${ACTIVITY.map(([v, l]) => `<option value="${v}" ${Number(state.profile.activity) === v ? 'selected' : ''}>${l}</option>`).join('')}
+        </select>
       </label>
-      <p class="muted small">Los objetivos de cada día = gramos por kg del tipo de entrenamiento × tu peso.</p>
+      <p class="small" style="margin-top:10px">Mantenimiento estimado: <b>${estimateMaintenance(state.profile)} kcal/día</b> ·
+        Tus entrenos suman de media ${weeklyBaseKcal(state)} kcal/día.</p>
+      <button data-action="calibrate">Ajustar mis entrenos a este mantenimiento</button>
+      <p class="muted small">Recalcula los carbohidratos y grasas de cada tipo de entreno (la proteína no cambia) para que la media semanal sea tu mantenimiento. Después, la fase (volumen, definición...) suma o resta sobre eso.
+        Si te pesas a menudo, la pestaña Progreso afinará el mantenimiento con tus datos reales.</p>
     </section>
 
     <section class="card">
@@ -569,7 +783,9 @@ function openFoodDialog() {
 
 // ---------- Render principal ----------
 
-const views = { hoy: renderDay, semana: renderWeek, tipos: renderTypes, historial: renderHistory, ajustes: renderSettings };
+const views = {
+  hoy: renderDay, semana: renderWeek, tipos: renderTypes, progreso: renderProgress, historial: renderHistory, ajustes: renderSettings,
+};
 
 function render() {
   $view.innerHTML = views[tab]();
@@ -612,6 +828,39 @@ $view.addEventListener('click', (ev) => {
       break;
     }
     case 'apply-diet': applyDiet(state, currentDay); commit(); break;
+    case 'water': {
+      const l = log();
+      l.water = Math.max(0, (Number(l.water) || 0) + Number(el.dataset.ml));
+      commit();
+      break;
+    }
+    case 'start-phase': {
+      const goal = document.getElementById('ph-goal').value;
+      const start = document.getElementById('ph-start').value || dateKey();
+      const tw = Number(document.getElementById('ph-target').value);
+      state.phases = state.phases.filter((p) => p.start !== start);
+      state.phases.push(newPhase(goal, start, { targetWeight: tw > 0 ? tw : null }));
+      state.phases.sort((a, b) => a.start.localeCompare(b.start));
+      commit();
+      break;
+    }
+    case 'del-phase':
+      if (!confirm('¿Borrar esta fase del historial?')) return;
+      state.phases = state.phases.filter((p) => p.id !== el.dataset.id);
+      commit();
+      break;
+    case 'apply-adapt':
+      state.profile.maintAdjust = (Number(state.profile.maintAdjust) || 0) + Number(el.dataset.kcal);
+      commit();
+      break;
+    case 'reset-adjust': state.profile.maintAdjust = 0; commit(); break;
+    case 'calibrate': {
+      const m = estimateMaintenance(state.profile);
+      if (!confirm(`¿Ajustar los carbohidratos y grasas de tus entrenos para una media de ${m} kcal/día?`)) return;
+      calibrateTypes(state, m);
+      commit();
+      break;
+    }
     case 'remove-diet': removeDiet(state, currentDay); commit(); break;
     case 'add-diet-item': {
       const t = type();
@@ -705,12 +954,7 @@ $view.addEventListener('change', (ev) => {
       return commit();
     }
     case 'set-day-weight': {
-      const w = Number(el.value);
-      if (w > 0) {
-        log().weight = w;
-        // Si es el registro de hoy, también pasa a ser el peso actual del perfil.
-        if (currentDay === dateKey()) state.profile.weight = w;
-      }
+      setBody(currentDay, 'w', el.value);
       return commit();
     }
     case 'set-weight': {
@@ -719,6 +963,22 @@ $view.addEventListener('change', (ev) => {
       return commit();
     }
     case 'set-plan': state.weekPlan[el.dataset.day] = el.value; return commit();
+    case 'set-body': setBody(dateKey(), el.dataset.field, el.value); return commit();
+    case 'profile': {
+      const f = el.dataset.field;
+      state.profile[f] = f === 'sex' ? el.value : Number(el.value) || state.profile[f];
+      return commit();
+    }
+    case 'phase-field': {
+      const ph = state.phases.find((p) => p.id === el.dataset.id);
+      const f = el.dataset.field;
+      const v = el.value === '' ? null : Number(el.value);
+      ph[f] = f === 'targetWeight' ? (v > 0 ? v : null) : (v ?? 0);
+      return commit();
+    }
+    case 'ph-goal-preview':
+      document.getElementById('ph-desc').textContent = GOALS[el.value].desc;
+      return undefined;
     case 'toggle-ex': log().exercises[Number(el.dataset.i)].done = el.checked; return commit();
     case 'history-range': historyRange = Number(el.value); return render();
     default: break;

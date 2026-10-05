@@ -4,6 +4,9 @@ import {
   defaultState, kcal, targetsFor, totals, dateKey, addDays,
   typeIdForDate, ensureLog, daySummary, normalizeState,
   scaleDiet, syncDiet, removeDiet, round,
+  GOALS, newPhase, phaseFor, dayTargets, findType, weightFor, weightTrend, weightRate,
+  estimateMaintenance, weeklyBaseKcal, calibrateTypes, adaptiveCheck, rateStatus, phaseAdvice,
+  lastExercise,
 } from '../js/core.js';
 
 test('kcal usa 4/4/9', () => {
@@ -107,4 +110,108 @@ test('normalizeState añade dietas a tipos antiguos', () => {
   const s = normalizeState({ types: [{ id: 'pierna', name: 'Pierna', perKg: { p: 2, c: 4, f: 1 } }] });
   assert.ok(s.types[0].diet.length > 0);
   assert.equal(s.types[0].autoScale, true);
+});
+
+const DAY = '2026-10-05'; // lunes → empuje
+
+test('sin fase (mantenimiento) los objetivos son los del tipo de entreno', () => {
+  const s = defaultState();
+  const type = findType(s, 'empuje');
+  assert.deepEqual(dayTargets(s, type, DAY), targetsFor(type, 75));
+});
+
+test('volumen sube kcal y definición las baja subiendo la proteína', () => {
+  const s = defaultState();
+  const type = findType(s, 'empuje');
+  const base = targetsFor(type, 75);
+  s.phases.push(newPhase('volumen', '2026-10-01'));
+  const vol = dayTargets(s, type, DAY);
+  assert.ok(Math.abs(vol.kcal - base.kcal * 1.15) < 10, `${vol.kcal}`);
+  assert.equal(vol.p, base.p);
+  assert.ok(vol.c > base.c && vol.f >= base.f);
+
+  s.phases.push(newPhase('definicion', '2026-10-03'));
+  assert.equal(phaseFor(s, DAY).goal, 'definicion');
+  assert.equal(phaseFor(s, '2026-10-02').goal, 'volumen');
+  const cut = dayTargets(s, type, DAY);
+  assert.ok(Math.abs(cut.kcal - base.kcal * 0.8) < 10, `${cut.kcal}`);
+  assert.equal(cut.p, round(2.3 * 75));
+  assert.ok(cut.f >= 0.6 * 75 - 0.5);
+  assert.ok(cut.c < base.c);
+});
+
+test('el ciclado de carbohidratos se mantiene en cualquier fase', () => {
+  const s = defaultState();
+  s.phases.push(newPhase('definicion', '2026-01-01'));
+  const pierna = dayTargets(s, findType(s, 'pierna'), DAY);
+  const descanso = dayTargets(s, findType(s, 'descanso'), DAY);
+  assert.ok(pierna.c > descanso.c * 1.5);
+});
+
+test('tendencia de peso suaviza fluctuaciones y se usa para los objetivos', () => {
+  const s = defaultState();
+  const ws = [80, 81.2, 79.6, 80.4, 80.9, 79.8, 80.3];
+  ws.forEach((w, i) => { s.body[addDays('2026-09-01', i)] = { w }; });
+  const tr = weightTrend(s, '2026-09-07');
+  assert.equal(tr.length, 7);
+  assert.ok(Math.abs(tr[6].trend - 80) < 0.5);
+  assert.equal(weightFor(s, '2026-08-01'), 75); // antes de pesarse: peso del perfil
+  assert.ok(Math.abs(weightFor(s, '2026-09-20') - tr[6].trend) < 0.11);
+});
+
+test('weightRate calcula kg/semana por regresión', () => {
+  const s = defaultState();
+  for (let i = 0; i < 21; i++) s.body[addDays('2026-09-01', i)] = { w: 80 - i * 0.1 };
+  const r = weightRate(s, '2026-09-21');
+  assert.ok(Math.abs(r.kgWeek + 0.7) < 0.01, `${r.kgWeek}`);
+  assert.equal(weightRate(defaultState(), '2026-09-21'), null);
+  s.phases.push(newPhase('definicion', '2026-09-01'));
+  assert.equal(rateStatus(phaseFor(s, '2026-09-21'), r).level, 'ok');
+  assert.equal(rateStatus(GOALS.volumen, r).level, 'warn');
+});
+
+test('mantenimiento estimado (Mifflin-St Jeor) y calibración de entrenos', () => {
+  const s = defaultState();
+  const m = estimateMaintenance({ weight: 75, height: 175, age: 30, sex: 'h', activity: 1.55 });
+  assert.equal(m, round((750 + 1093.75 - 150 + 5) * 1.55));
+  calibrateTypes(s, 2600);
+  assert.ok(Math.abs(weeklyBaseKcal(s) - 2600) < 40, `${weeklyBaseKcal(s)}`);
+  assert.equal(findType(s, 'pierna').perKg.p, 2.2);
+});
+
+test('ajuste adaptativo detecta un mantenimiento real distinto al previsto', () => {
+  const s = defaultState();
+  // 21 días comiendo exactamente lo planificado y perdiendo 0,5 kg/semana → mantenimiento real mayor.
+  for (let i = 1; i <= 21; i++) {
+    const k = addDays('2026-10-05', -i);
+    s.body[k] = { w: 75 + (i * 0.5) / 7 };
+    syncDiet(s, k, '2000-01-01');
+  }
+  const r = adaptiveCheck(s, '2026-10-05');
+  assert.equal(r.ready, true);
+  assert.ok(r.correction >= 400 && r.correction <= 500, `${r.correction}`);
+  assert.equal(adaptiveCheck(defaultState(), '2026-10-05').ready, false);
+});
+
+test('avisos de fase: descanso de dieta tras muchas semanas de definición', () => {
+  const s = defaultState();
+  s.phases.push(newPhase('definicion', '2026-07-01'));
+  assert.ok(phaseAdvice(s, DAY).some((t) => t.includes('descanso de dieta')));
+  s.phases.push(newPhase('minicut', '2026-08-01'));
+  assert.ok(phaseAdvice(s, DAY).some((t) => t.includes('máximo de 6')));
+});
+
+test('lastExercise devuelve la última marca registrada', () => {
+  const s = defaultState();
+  ensureLog(s, '2026-09-28').exercises.push({ name: 'Press banca', sets: 4, reps: 8, kg: 80 });
+  ensureLog(s, '2026-10-01').exercises.push({ name: 'Press banca', sets: '', reps: '', kg: '' });
+  assert.deepEqual(lastExercise(s, 'Press banca', DAY), { key: '2026-09-28', sets: 4, reps: 8, kg: 80 });
+  assert.equal(lastExercise(s, 'Sentadilla', DAY), null);
+});
+
+test('normalizeState migra el peso guardado en los días', () => {
+  const s = normalizeState({ logs: { '2026-09-01': { weight: 82, entries: [] } } });
+  assert.equal(s.body['2026-09-01'].w, 82);
+  assert.equal(s.logs['2026-09-01'].weight, undefined);
+  assert.deepEqual(s.phases, []);
 });

@@ -1,5 +1,5 @@
 // Service worker: cachea la app para que funcione sin conexión.
-const CACHE = 'macros-gym-v3';
+const CACHE = 'macros-gym-v4';
 const ASSETS = ['./', 'index.html', 'css/styles.css', 'js/app.js', 'js/core.js', 'manifest.json', 'icon.svg', 'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {
