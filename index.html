@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1b1f3b">
+  <title>Macros Gym</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <!-- iPhone: pantalla completa al abrir desde la pantalla de inicio -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Macros Gym">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Macros Gym</h1>
+  </header>
+
+  <div id="install-hint" class="install-hint" hidden>
+    <div class="grow">
+      <b>Instálala en tu iPhone</b><br>
+      En Safari toca <span aria-label="Compartir">Compartir <svg width="14" height="16" viewBox="0 0 14 18" aria-hidden="true"><path d="M7 1v11M3 5l4-4 4 4M1 9v8h12V9" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></span>
+      y luego <b>“Añadir a pantalla de inicio”</b>.
+    </div>
+    <button class="icon" id="install-hint-close" aria-label="Cerrar">✕</button>
+  </div>
+
+  <main id="view" aria-live="polite"></main>
+
+  <nav class="tabs" role="tablist">
+    <button data-tab="hoy" role="tab">🍽️<span>Día</span></button>
+    <button data-tab="semana" role="tab">📅<span>Semana</span></button>
+    <button data-tab="tipos" role="tab">🏋️<span>Entrenos</span></button>
+    <button data-tab="historial" role="tab">📈<span>Historial</span></button>
+    <button data-tab="ajustes" role="tab">⚙️<span>Ajustes</span></button>
+  </nav>
+
+  <dialog id="dialog"><form method="dialog" id="dialog-form"></form></dialog>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "name": "aplicaciongym",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Registro de macros diarios según el tipo de entrenamiento del día",
+  "scripts": {
+    "start": "python3 -m http.server 8080",
+    "test": "node --test test/*.test.js"
+  }
+}
