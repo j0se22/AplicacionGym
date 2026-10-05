@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   defaultState, kcal, targetsFor, totals, dateKey, addDays,
   typeIdForDate, ensureLog, daySummary, normalizeState,
+  scaleDiet, syncDiet, removeDiet, round,
 } from '../js/core.js';
 
 test('kcal usa 4/4/9', () => {
@@ -45,4 +46,65 @@ test('normalizeState repara datos incompletos', () => {
   assert.ok(s.types.length > 0);
   assert.deepEqual(s.logs['2026-01-01'].entries, []);
   assert.deepEqual(normalizeState(null).profile, defaultState().profile);
+});
+
+test('cada tipo trae una dieta por defecto', () => {
+  const s = defaultState();
+  for (const t of s.types) assert.ok(t.diet.length >= 8, t.id);
+});
+
+test('scaleDiet acerca la dieta al objetivo del tipo de entreno', () => {
+  const s = defaultState();
+  for (const t of s.types) {
+    const target = targetsFor(t, 75);
+    const got = totals(scaleDiet(t.diet, target));
+    for (const m of ['p', 'c', 'f']) {
+      const err = Math.abs(got[m] - target[m]) / target[m];
+      assert.ok(err < 0.12, `${t.id} ${m}: ${got[m]} vs ${target[m]}`);
+    }
+  }
+});
+
+test('scaleDiet redondea a cantidades razonables', () => {
+  const s = defaultState();
+  const items = scaleDiet(s.types[0].diet, targetsFor(s.types[0], 90));
+  for (const it of items) {
+    if (it.size) assert.equal(round(it.qty * it.size) % 5, 0, it.name);
+    else assert.equal((it.qty * 2) % 1, 0, it.name);
+  }
+});
+
+test('syncDiet rellena hoy, no los días pasados, y se adapta al tipo de día', () => {
+  const s = defaultState();
+  const today = '2026-10-05'; // lunes → empuje
+  assert.equal(syncDiet(s, '2026-10-04', today), false);
+  assert.equal(s.logs['2026-10-04'], undefined);
+
+  assert.equal(syncDiet(s, today, today), true);
+  const kcalEmpuje = daySummary(s, today).eaten.kcal;
+  assert.ok(Math.abs(kcalEmpuje - daySummary(s, today).target.kcal) / kcalEmpuje < 0.08);
+  assert.equal(syncDiet(s, today, today), false);
+
+  // Una comida extra se conserva al cambiar el tipo de día.
+  s.logs[today].entries.push({ id: 'x', name: 'Helado', p: 4, c: 30, f: 10, qty: 1 });
+  s.logs[today].typeId = 'pierna';
+  assert.equal(syncDiet(s, today, today), true);
+  assert.ok(daySummary(s, today).eaten.kcal > kcalEmpuje);
+  assert.ok(s.logs[today].entries.some((e) => e.name === 'Helado'));
+
+  // Si editas la dieta del día, ya no se recalcula sola.
+  s.logs[today].dietLocked = true;
+  s.logs[today].typeId = 'descanso';
+  assert.equal(syncDiet(s, today, today), false);
+
+  // Quitar la dieta deja solo las comidas añadidas.
+  removeDiet(s, today);
+  assert.deepEqual(s.logs[today].entries.map((e) => e.name), ['Helado']);
+  assert.equal(syncDiet(s, today, today), false);
+});
+
+test('normalizeState añade dietas a tipos antiguos', () => {
+  const s = normalizeState({ types: [{ id: 'pierna', name: 'Pierna', perKg: { p: 2, c: 4, f: 1 } }] });
+  assert.ok(s.types[0].diet.length > 0);
+  assert.equal(s.types[0].autoScale, true);
 });

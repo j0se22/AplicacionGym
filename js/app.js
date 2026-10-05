@@ -1,6 +1,7 @@
 import {
   STORAGE_KEY, WEEKDAYS, uid, round, kcal, targetsFor, totals, dateKey, parseKey, addDays,
   findType, typeIdForDate, getLog, ensureLog, daySummary, normalizeState, defaultState,
+  MEALS, amountLabel, syncDiet, applyDiet, removeDiet, dietItem, defaultDiet, scaleDiet,
 } from './core.js';
 
 // ---------- Estado y persistencia ----------
@@ -18,6 +19,7 @@ let state = load();
 let tab = 'hoy';
 let currentDay = dateKey();
 let historyRange = 14;
+const openDiets = new Set(); // dietas desplegadas en la pestaña Entrenos
 
 function save() {
   try {
@@ -77,8 +79,39 @@ function macroBar(label, eaten, target, color, unit = 'g') {
 
 // ---------- Vista: Día ----------
 
+function entryRow(e, i) {
+  const t = totals([e]);
+  const amount = amountLabel(e);
+  return `
+    <li>
+      <div class="grow">
+        <div class="name">${esc(e.name)}${amount ? ` <span class="muted">${esc(amount)}</span>` : ''}${e.diet ? ' <span class="tag">dieta</span>' : ''}</div>
+        <div class="muted small">P ${t.p} · C ${t.c} · G ${t.f} · ${t.kcal} kcal</div>
+      </div>
+      <button class="icon" data-action="edit-entry" data-i="${i}" title="Editar">✏️</button>
+      <button class="icon danger" data-action="del-entry" data-i="${i}" title="Borrar">✕</button>
+    </li>`;
+}
+
+function mealsList(entries) {
+  const byMeal = new Map(MEALS.map((m) => [m, []]));
+  entries.forEach((e, i) => {
+    const m = byMeal.has(e.meal) ? e.meal : 'Extra';
+    byMeal.get(m).push([e, i]);
+  });
+  return [...byMeal].filter(([, list]) => list.length).map(([meal, list]) => `
+    <div class="meal">
+      <div class="row between meal-head">
+        <h3>${esc(meal)}</h3>
+        <span class="muted small">${totals(list.map(([e]) => e)).kcal} kcal</span>
+      </div>
+      <ul class="list">${list.map(([e, i]) => entryRow(e, i)).join('')}</ul>
+    </div>`).join('');
+}
+
 function renderDay() {
   const key = currentDay;
+  if (syncDiet(state, key)) save();
   const log = getLog(state, key);
   const typeId = typeIdForDate(state, key);
   const type = findType(state, typeId);
@@ -86,19 +119,17 @@ function renderDay() {
   const { target, eaten } = daySummary(state, key);
   const isToday = key === dateKey();
 
-  const entries = log.entries.map((e, i) => {
-    const q = Number(e.qty ?? 1);
-    const t = totals([e]);
-    return `
-      <li>
-        <div class="grow">
-          <div class="name">${esc(e.name)}${q !== 1 ? ` <span class="muted">×${q}</span>` : ''}</div>
-          <div class="muted small">P ${t.p} · C ${t.c} · G ${t.f} · ${t.kcal} kcal</div>
-        </div>
-        <button class="icon" data-action="edit-entry" data-i="${i}" title="Editar">✏️</button>
-        <button class="icon danger" data-action="del-entry" data-i="${i}" title="Borrar">✕</button>
-      </li>`;
-  }).join('');
+  const hasDiet = log.entries.some((e) => e.diet);
+  const dietNote = hasDiet
+    ? `<p class="muted small">${log.dietLocked
+      ? 'Has modificado la dieta de este día, así que ya no se recalcula sola.'
+      : `Dieta por defecto de <b>${esc(type?.name ?? '')}</b>${type?.autoScale ? ', ajustada a tus macros' : ''}. Borra lo que no comas y añade los extras.`}</p>
+       <div class="row">
+         <button class="small-btn" data-action="apply-diet">↺ Recalcular dieta</button>
+         <button class="small-btn" data-action="remove-diet">Quitar dieta</button>
+       </div>`
+    : `<p class="muted small">Este día no tiene dieta por defecto.</p>
+       <button class="small-btn" data-action="apply-diet" ${type?.diet.length ? '' : 'disabled'}>Poner dieta de ${esc(type?.name ?? '')}</button>`;
 
   const exercises = log.exercises.map((x, i) => `
     <li class="${x.done ? 'done' : ''}">
@@ -166,7 +197,8 @@ function renderDay() {
         <h2>Comidas</h2>
         <button class="primary" data-action="add-entry">+ Añadir</button>
       </div>
-      ${entries ? `<ul class="list">${entries}</ul>` : '<div class="empty">Aún no has registrado comidas.</div>'}
+      ${dietNote}
+      ${log.entries.length ? mealsList(log.entries) : '<div class="empty">Aún no has registrado comidas.</div>'}
     </section>
 
     <section class="card">
@@ -218,6 +250,50 @@ function renderWeek() {
 
 // ---------- Vista: Tipos de entrenamiento ----------
 
+function dietEditor(t, target) {
+  const scaled = t.autoScale ? scaleDiet(t.diet, target) : t.diet;
+  const tot = totals(scaled);
+  const rows = MEALS.map((meal) => {
+    const items = t.diet.map((it, i) => [it, i]).filter(([it]) => (it.meal || 'Extra') === meal);
+    if (!items.length) return '';
+    return `
+      <h4>${meal}</h4>
+      <ul class="list">${items.map(([it, i]) => `
+        <li>
+          <div class="grow">${esc(it.name)}${t.autoScale ? ` <span class="muted small">→ ${esc(amountLabel(scaled[i]) || '×1')}</span>` : ''}</div>
+          <input type="number" min="0" step="any" inputmode="decimal" value="${round(it.size ? it.qty * it.size : it.qty, 2)}"
+            data-type="${esc(t.id)}" data-i="${i}" data-dfield="amount" aria-label="Cantidad">
+          <span class="muted small unit">${esc(it.size ? it.unit || 'g' : 'ud')}</span>
+          <button class="icon danger" data-action="del-diet-item" data-type="${esc(t.id)}" data-i="${i}" aria-label="Quitar">✕</button>
+        </li>`).join('')}
+      </ul>`;
+  }).join('');
+
+  return `
+    <details class="diet" data-type="${esc(t.id)}" ${openDiets.has(t.id) ? 'open' : ''}>
+      <summary><b>Dieta por defecto</b> <span class="muted small">· ${t.diet.length} alimentos · ${tot.kcal} kcal</span></summary>
+      <label class="check">
+        <input type="checkbox" data-action="set-autoscale" data-type="${esc(t.id)}" ${t.autoScale ? 'checked' : ''}>
+        Ajustar cantidades a mis macros automáticamente
+      </label>
+      <p class="muted small">
+        ${t.autoScale ? 'Cantidades base (a la izquierda) y ajustadas a tu objetivo (→).' : 'Se usan exactamente estas cantidades.'}
+        Total: P ${round(tot.p)} · C ${round(tot.c)} · G ${round(tot.f)} g · <b>${tot.kcal}</b> / ${target.kcal} kcal
+      </p>
+      ${rows || '<div class="empty">Sin alimentos.</div>'}
+      <div class="diet-add">
+        <select data-dnew="meal" aria-label="Comida">${MEALS.map((m) => `<option>${m}</option>`).join('')}</select>
+        <select data-dnew="food" class="grow" aria-label="Alimento">
+          ${state.foods.map((f) => `<option value="${esc(f.id)}">${esc(f.name)}</option>`).join('')}
+        </select>
+        <input type="number" min="0" step="any" inputmode="decimal" placeholder="cant." data-dnew="amount" aria-label="Cantidad">
+        <button data-action="add-diet-item" data-type="${esc(t.id)}">Añadir</button>
+      </div>
+      <p class="muted small">Cantidad en g/ml (o unidades). Para alimentos nuevos, créalos en Ajustes → Mis alimentos.</p>
+      <button class="small-btn" data-action="reset-diet" data-type="${esc(t.id)}">Restaurar dieta original</button>
+    </details>`;
+}
+
 function renderTypes() {
   const w = state.profile.weight;
   const cards = state.types.map((t) => {
@@ -236,6 +312,7 @@ function renderTypes() {
           <label>Grasas<input type="number" min="0" step="0.1" value="${t.perKg.f}" data-type="${esc(t.id)}" data-tfield="f"></label>
         </div>
         <p class="muted small">Con ${esc(w)} kg: P ${g.p} g · C ${g.c} g · G ${g.f} g · <b>${g.kcal} kcal</b></p>
+        ${dietEditor(t, g)}
         <h3>Ejercicios</h3>
         <div class="chips">
           ${t.exercises.map((x, i) => `<span class="chip">${esc(x)}<button data-action="del-type-ex" data-type="${esc(t.id)}" data-i="${i}" aria-label="Quitar">✕</button></span>`).join('') || '<span class="muted small">Ninguno</span>'}
@@ -248,7 +325,7 @@ function renderTypes() {
   }).join('');
 
   return `
-    <p class="muted">Cada tipo de entrenamiento tiene sus propios objetivos de macros y su lista de ejercicios.</p>
+    <p class="muted">Cada tipo de entrenamiento tiene sus propios objetivos de macros, su dieta por defecto y su lista de ejercicios.</p>
     ${cards}
     <button class="primary" data-action="add-type" style="width:100%">+ Nuevo tipo de entrenamiento</button>`;
 }
@@ -307,7 +384,7 @@ function renderSettings() {
     <li>
       <div class="grow">
         <div>${esc(f.name)}</div>
-        <div class="muted small">P ${f.p} · C ${f.c} · G ${f.f} · ${round(kcal(f))} kcal</div>
+        <div class="muted small">${f.size ? `${f.size} ${esc(f.unit || 'g')}` : '1 ud'}: P ${f.p} · C ${f.c} · G ${f.f} · ${round(kcal(f))} kcal</div>
       </div>
       <button class="icon danger" data-action="del-food" data-id="${esc(f.id)}">✕</button>
     </li>`).join('');
@@ -323,7 +400,7 @@ function renderSettings() {
 
     <section class="card">
       <h2>Mis alimentos</h2>
-      <p class="muted small">Alimentos guardados para añadirlos rápido. Valores por ración.</p>
+      <p class="muted small">Alimentos para añadir rápido y para montar tus dietas por defecto.</p>
       ${foods ? `<ul class="list">${foods}</ul>` : '<div class="empty">No hay alimentos guardados.</div>'}
       <button data-action="new-food" style="margin-top:8px">+ Nuevo alimento</button>
     </section>
@@ -342,10 +419,23 @@ function renderSettings() {
 
 // ---------- Diálogo de comida ----------
 
+function defaultMeal() {
+  const h = new Date().getHours();
+  if (currentDay !== dateKey()) return 'Extra';
+  if (h < 11) return 'Desayuno';
+  if (h < 16) return 'Comida';
+  if (h < 19) return 'Merienda';
+  return 'Cena';
+}
+
 function openEntryDialog(index = null) {
   const log = ensureLog(state, currentDay);
   const editing = index !== null ? log.entries[index] : null;
-  const e = editing || { name: '', p: '', c: '', f: '', qty: 1 };
+  const e = editing || { name: '', p: '', c: '', f: '', qty: 1, meal: defaultMeal() };
+  // Ración actual: `size` gramos/ml o, si no hay, unidades.
+  let size = e.size || null;
+  let unit = e.unit || 'g';
+  const amountOf = (qty) => (size ? round(qty * size) : qty);
 
   $dialogForm.innerHTML = `
     <h2 style="margin-top:0">${editing ? 'Editar comida' : 'Añadir comida'}</h2>
@@ -356,13 +446,19 @@ function openEntryDialog(index = null) {
           ${state.foods.map((f) => `<option value="${esc(f.id)}">${esc(f.name)}</option>`).join('')}
         </select>
       </label>`}
-    <label style="margin-top:8px">Nombre <input id="d-name" required value="${esc(e.name)}"></label>
+    <div class="row" style="margin-top:8px">
+      <label class="grow">Nombre <input id="d-name" required value="${esc(e.name)}"></label>
+      <label>Comida
+        <select id="d-meal">${MEALS.map((m) => `<option ${m === (e.meal || 'Extra') ? 'selected' : ''}>${m}</option>`).join('')}</select>
+      </label>
+    </div>
+    <p class="muted small" id="d-per" style="margin:8px 0 0"></p>
     <div class="fields">
       <label>Proteína (g)<input id="d-p" type="number" min="0" step="0.1" inputmode="decimal" value="${esc(e.p)}"></label>
       <label>Carbos (g)<input id="d-c" type="number" min="0" step="0.1" inputmode="decimal" value="${esc(e.c)}"></label>
       <label>Grasas (g)<input id="d-f" type="number" min="0" step="0.1" inputmode="decimal" value="${esc(e.f)}"></label>
     </div>
-    <label>Cantidad (raciones)<input id="d-qty" type="number" min="0" step="0.25" inputmode="decimal" value="${esc(e.qty ?? 1)}"></label>
+    <label><span id="d-qty-label"></span><input id="d-qty" type="number" min="0" step="any" inputmode="decimal" value="${esc(amountOf(Number(e.qty ?? 1)))}"></label>
     ${editing ? '' : '<label style="flex-direction:row;align-items:center;margin-top:8px"><input type="checkbox" id="d-save"> Guardar en mis alimentos</label>'}
     <p class="muted small" id="d-kcal"></p>
     <div class="row" style="justify-content:flex-end">
@@ -371,8 +467,16 @@ function openEntryDialog(index = null) {
     </div>`;
 
   const val = (id) => $dialogForm.querySelector(id);
+  const qty = () => {
+    const n = Number(val('#d-qty').value) || 0;
+    return size ? n / size : n;
+  };
+  const updateLabels = () => {
+    val('#d-per').textContent = size ? `Macros por ${size} ${unit}:` : 'Macros por unidad/ración:';
+    val('#d-qty-label').textContent = size ? `Cantidad (${unit})` : 'Cantidad (raciones)';
+  };
   const updateKcal = () => {
-    const q = Number(val('#d-qty').value) || 0;
+    const q = qty();
     val('#d-kcal').textContent = `${round(kcal({
       p: Number(val('#d-p').value) * q, c: Number(val('#d-c').value) * q, f: Number(val('#d-f').value) * q,
     }))} kcal`;
@@ -382,30 +486,43 @@ function openEntryDialog(index = null) {
   if (sel) {
     sel.onchange = () => {
       const f = state.foods.find((x) => x.id === sel.value);
-      if (!f) return;
+      size = f?.size || null;
+      unit = f?.unit || 'g';
+      if (!f) { updateLabels(); return; }
       val('#d-name').value = f.name;
       val('#d-p').value = f.p;
       val('#d-c').value = f.c;
       val('#d-f').value = f.f;
+      val('#d-qty').value = size || 1;
+      updateLabels();
       updateKcal();
     };
   }
+  updateLabels();
   updateKcal();
 
   $dialog.onclose = () => {
     if ($dialog.returnValue !== 'ok') return;
     const item = {
       id: editing?.id ?? uid(),
+      meal: val('#d-meal').value,
       name: val('#d-name').value.trim() || 'Comida',
       p: Number(val('#d-p').value) || 0,
       c: Number(val('#d-c').value) || 0,
       f: Number(val('#d-f').value) || 0,
-      qty: Number(val('#d-qty').value) || 0,
+      qty: qty(),
     };
+    if (size) Object.assign(item, { size, unit });
+    if (editing?.diet) {
+      item.diet = true;
+      log.dietLocked = true;
+    }
     if (editing) log.entries[index] = item;
     else log.entries.push(item);
     if (val('#d-save')?.checked) {
-      state.foods.push({ id: uid(), name: item.name, p: item.p, c: item.c, f: item.f });
+      const food = { id: uid(), name: item.name, p: item.p, c: item.c, f: item.f };
+      if (size) Object.assign(food, { size, unit });
+      state.foods.push(food);
     }
     commit();
   };
@@ -416,7 +533,14 @@ function openEntryDialog(index = null) {
 function openFoodDialog() {
   $dialogForm.innerHTML = `
     <h2 style="margin-top:0">Nuevo alimento</h2>
-    <label>Nombre (incluye la ración, ej. "Yogur griego 125 g")<input id="f-name" required></label>
+    <label>Nombre<input id="f-name" required placeholder="Ej. Yogur griego"></label>
+    <div class="row" style="margin-top:8px">
+      <label>Ración<input id="f-size" type="number" min="0" step="any" inputmode="decimal" value="100"></label>
+      <label>Unidad
+        <select id="f-unit"><option value="g">g</option><option value="ml">ml</option><option value="ud">unidad</option></select>
+      </label>
+    </div>
+    <p class="muted small" style="margin:8px 0 0">Macros por esa ración:</p>
     <div class="fields">
       <label>Proteína (g)<input id="f-p" type="number" min="0" step="0.1" inputmode="decimal"></label>
       <label>Carbos (g)<input id="f-c" type="number" min="0" step="0.1" inputmode="decimal"></label>
@@ -430,10 +554,13 @@ function openFoodDialog() {
   $dialog.onclose = () => {
     if ($dialog.returnValue !== 'ok') return;
     const v = (id) => $dialogForm.querySelector(id).value;
-    state.foods.push({
+    const food = {
       id: uid(), name: v('#f-name').trim() || 'Alimento',
       p: Number(v('#f-p')) || 0, c: Number(v('#f-c')) || 0, f: Number(v('#f-f')) || 0,
-    });
+    };
+    const sz = Number(v('#f-size'));
+    if (v('#f-unit') !== 'ud' && sz > 0) Object.assign(food, { size: sz, unit: v('#f-unit') });
+    state.foods.push(food);
     commit();
   };
   $dialog.returnValue = '';
@@ -477,7 +604,33 @@ $view.addEventListener('click', (ev) => {
     case 'reset-day-type': log().typeId = null; commit(); break;
     case 'add-entry': openEntryDialog(); break;
     case 'edit-entry': openEntryDialog(i); break;
-    case 'del-entry': log().entries.splice(i, 1); commit(); break;
+    case 'del-entry': {
+      const l = log();
+      if (l.entries[i]?.diet) l.dietLocked = true;
+      l.entries.splice(i, 1);
+      commit();
+      break;
+    }
+    case 'apply-diet': applyDiet(state, currentDay); commit(); break;
+    case 'remove-diet': removeDiet(state, currentDay); commit(); break;
+    case 'add-diet-item': {
+      const t = type();
+      const box = el.closest('.diet-add');
+      const food = state.foods.find((f) => f.id === box.querySelector('[data-dnew="food"]').value);
+      if (!food) return;
+      const amount = Number(box.querySelector('[data-dnew="amount"]').value) || food.size || 1;
+      t.diet.push(dietItem(food, box.querySelector('[data-dnew="meal"]').value, amount));
+      openDiets.add(t.id);
+      commit();
+      break;
+    }
+    case 'del-diet-item': type().diet.splice(i, 1); openDiets.add(el.dataset.type); commit(); break;
+    case 'reset-diet':
+      if (!confirm('¿Restaurar la dieta original de este entrenamiento?')) return;
+      type().diet = defaultDiet(el.dataset.type);
+      openDiets.add(el.dataset.type);
+      commit();
+      break;
     case 'del-ex': log().exercises.splice(i, 1); commit(); break;
     case 'load-routine': {
       const t = findType(state, typeIdForDate(state, currentDay));
@@ -500,7 +653,10 @@ $view.addEventListener('click', (ev) => {
     }
     case 'add-type': {
       const id = uid();
-      state.types.push({ id, name: 'Nuevo entrenamiento', color: '#3d5afe', perKg: { p: 2, c: 3, f: 1 }, exercises: [] });
+      state.types.push({
+        id, name: 'Nuevo entrenamiento', color: '#3d5afe', perKg: { p: 2, c: 3, f: 1 },
+        exercises: [], diet: defaultDiet(id), autoScale: true,
+      });
       commit();
       break;
     }
@@ -573,6 +729,22 @@ $view.addEventListener('change', (ev) => {
     return save();
   }
 
+  if (el.dataset.dfield) {
+    const t = findType(state, el.dataset.type);
+    const item = t.diet[Number(el.dataset.i)];
+    const n = Math.max(0, Number(el.value) || 0);
+    if (el.dataset.dfield === 'amount') item.qty = item.size ? n / item.size : n;
+    else if (el.dataset.dfield === 'meal') item.meal = el.value;
+    openDiets.add(t.id);
+    return commit();
+  }
+
+  if (el.dataset.action === 'set-autoscale') {
+    findType(state, el.dataset.type).autoScale = el.checked;
+    openDiets.add(el.dataset.type);
+    return commit();
+  }
+
   if (el.dataset.tfield) {
     const t = findType(state, el.dataset.type);
     const f = el.dataset.tfield;
@@ -582,6 +754,13 @@ $view.addEventListener('change', (ev) => {
     return commit();
   }
 });
+
+$view.addEventListener('toggle', (ev) => {
+  const d = ev.target;
+  if (!d.matches?.('details.diet')) return;
+  if (d.open) openDiets.add(d.dataset.type);
+  else openDiets.delete(d.dataset.type);
+}, true);
 
 $view.addEventListener('keydown', (ev) => {
   if (ev.key !== 'Enter') return;
