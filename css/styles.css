@@ -213,3 +213,12 @@ label.check { flex-direction: row; align-items: center; gap: 8px; margin: 8px 0;
 .chart .axis { fill: var(--muted); font-size: 9px; }
 input[type="date"] { min-height: 40px; }
 .tabs button span { font-size: .64rem; }
+
+textarea {
+  font: inherit; font-size: 16px; color: var(--text); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; width: 100%; resize: vertical;
+}
+.ex-group[hidden], .lib li[hidden] { display: none; }
+.lib .list li { padding: 6px 0; }
+.notes { white-space: pre-line; }
+[hidden] { display: none !important; }

@@ -6,7 +6,7 @@ import {
   scaleDiet, syncDiet, removeDiet, round,
   GOALS, newPhase, phaseFor, dayTargets, findType, weightFor, weightTrend, weightRate,
   estimateMaintenance, weeklyBaseKcal, calibrateTypes, adaptiveCheck, rateStatus, phaseAdvice,
-  lastExercise,
+  lastExercise, findExercise, ensureExercise, saveExercise, deleteExercise, dayExercise,
 } from '../js/core.js';
 
 test('kcal usa 4/4/9', () => {
@@ -205,7 +205,8 @@ test('lastExercise devuelve la última marca registrada', () => {
   const s = defaultState();
   ensureLog(s, '2026-09-28').exercises.push({ name: 'Press banca', sets: 4, reps: 8, kg: 80 });
   ensureLog(s, '2026-10-01').exercises.push({ name: 'Press banca', sets: '', reps: '', kg: '' });
-  assert.deepEqual(lastExercise(s, 'Press banca', DAY), { key: '2026-09-28', sets: 4, reps: 8, kg: 80 });
+  const l = lastExercise(s, 'Press banca', DAY);
+  assert.deepEqual([l.key, l.sets, l.reps, l.kg], ['2026-09-28', 4, 8, 80]);
   assert.equal(lastExercise(s, 'Sentadilla', DAY), null);
 });
 
@@ -214,4 +215,53 @@ test('normalizeState migra el peso guardado en los días', () => {
   assert.equal(s.body['2026-09-01'].w, 82);
   assert.equal(s.logs['2026-09-01'].weight, undefined);
   assert.deepEqual(s.phases, []);
+});
+
+test('la biblioteca trae los ejercicios de las rutinas con su grupo y tipo', () => {
+  const s = defaultState();
+  for (const t of s.types) for (const n of t.exercises) assert.ok(findExercise(s, n), n);
+  assert.equal(findExercise(s, 'press banca').group, 'Pecho');
+  assert.equal(findExercise(s, 'Cinta').kind, 'tiempo');
+});
+
+test('crear, renombrar y borrar ejercicios propios', () => {
+  const s = defaultState();
+  assert.equal(saveExercise(s, { name: 'Hip thrust', group: 'Femoral y glúteo', kind: 'peso', sets: 4, reps: 10, notes: 'Pausa arriba' }), null);
+  assert.match(saveExercise(s, { name: 'hip thrust' }), /Ya existe/);
+  assert.match(saveExercise(s, { name: '  ' }), /nombre/);
+  const x = findExercise(s, 'Hip thrust');
+  assert.equal(x.custom, true);
+
+  findExercise(s, 'Hip thrust');
+  findType(s, 'pierna').exercises.push('Hip thrust');
+  ensureLog(s, '2026-09-28').exercises.push({ ...dayExercise(s, 'Hip thrust'), kg: 100, done: true });
+  assert.equal(saveExercise(s, { ...x, name: 'Hip thrust con barra' }, x.id), null);
+  assert.ok(findType(s, 'pierna').exercises.includes('Hip thrust con barra'));
+  assert.equal(lastExercise(s, 'Hip thrust con barra', DAY).kg, 100);
+
+  deleteExercise(s, x.id);
+  assert.equal(findExercise(s, 'Hip thrust con barra'), null);
+  assert.ok(!findType(s, 'pierna').exercises.includes('Hip thrust con barra'));
+  assert.equal(s.logs['2026-09-28'].exercises.length, 1); // el historial se conserva
+});
+
+test('dayExercise usa los valores por defecto y ensureExercise crea los desconocidos', () => {
+  const s = defaultState();
+  const d = dayExercise(s, 'Press banca', true);
+  assert.equal(d.sets, 4);
+  assert.equal(d.reps, 8);
+  assert.equal(dayExercise(s, 'Cinta').min, 20);
+  const n = s.exercises.length;
+  ensureExercise(s, 'Remo Kroc');
+  assert.equal(s.exercises.length, n + 1);
+  assert.equal(findExercise(s, 'remo kroc').group, 'Otro');
+  // Una rutina cargada pero no hecha no cuenta como "última vez".
+  ensureLog(s, '2026-10-01').exercises.push(dayExercise(s, 'Sentadilla', true));
+  assert.equal(lastExercise(s, 'Sentadilla', DAY), null);
+});
+
+test('normalizeState crea la biblioteca para datos antiguos', () => {
+  const s = normalizeState({ types: [{ id: 'x', name: 'X', perKg: { p: 2, c: 3, f: 1 }, exercises: ['Mi ejercicio raro'] }] });
+  assert.ok(findExercise(s, 'Mi ejercicio raro'));
+  assert.ok(findExercise(s, 'Sentadilla'));
 });

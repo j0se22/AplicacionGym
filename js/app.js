@@ -5,6 +5,7 @@ import {
   GOALS, newPhase, phaseFor, phaseName, weeksInPhase, dayTargets, weightFor, weightTrend, weightRate,
   estimateMaintenance, weeklyBaseKcal, calibrateTypes, adaptiveCheck, rateStatus, phaseAdvice,
   lastExercise, waterTarget, bodyEntries,
+  EXERCISE_GROUPS, EXERCISE_KINDS, findExercise, saveExercise, deleteExercise, dayExercise,
 } from './core.js';
 
 // ---------- Estado y persistencia ----------
@@ -138,20 +139,7 @@ function renderDay() {
     : `<p class="muted small">Este día no tiene dieta por defecto.</p>
        <button class="small-btn" data-action="apply-diet" ${type?.diet.length ? '' : 'disabled'}>Poner dieta de ${esc(type?.name ?? '')}</button>`;
 
-  const exercises = log.exercises.map((x, i) => `
-    <li class="${x.done ? 'done' : ''}">
-      <input type="checkbox" data-action="toggle-ex" data-i="${i}" ${x.done ? 'checked' : ''} aria-label="Hecho">
-      <div class="grow">
-        <div class="name">${esc(x.name)}</div>
-        ${lastHint(x.name, key)}
-        <div class="ex-sets">
-          <input type="number" min="0" inputmode="numeric" placeholder="series" value="${esc(x.sets ?? '')}" data-field="sets" data-i="${i}" aria-label="Series">×
-          <input type="number" min="0" inputmode="numeric" placeholder="reps" value="${esc(x.reps ?? '')}" data-field="reps" data-i="${i}" aria-label="Repeticiones">
-          <input type="number" min="0" step="0.5" inputmode="decimal" placeholder="kg" value="${esc(x.kg ?? '')}" data-field="kg" data-i="${i}" aria-label="Kilos"><span class="muted small">kg</span>
-        </div>
-      </div>
-      <button class="icon danger" data-action="del-ex" data-i="${i}" title="Quitar">✕</button>
-    </li>`).join('');
+  const exercises = log.exercises.map((x, i) => exerciseRow(x, i, key)).join('');
 
   const remaining = {
     p: Math.max(0, round(target.p - eaten.p)),
@@ -235,13 +223,41 @@ function renderDay() {
         <datalist id="ex-suggestions">${allExerciseNames().map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
         <button data-action="add-ex">Añadir</button>
       </div>
+      <button class="small-btn" data-action="new-exercise" data-target="day" style="margin-top:8px">+ Crear ejercicio nuevo</button>
     </section>`;
+}
+
+const KIND_ICON = { peso: '🏋️', corporal: '🤸', tiempo: '⏱️' };
+
+function exerciseRow(x, i, key) {
+  const lib = findExercise(state, x.name);
+  const kind = lib?.kind || x.kind || 'peso';
+  const num = (field, ph, label, step = '1', mode = 'numeric') => `<input type="number" min="0" step="${step}" inputmode="${mode}" placeholder="${ph}" value="${esc(x[field] ?? '')}" data-field="${field}" data-i="${i}" aria-label="${label}">`;
+  const inputs = kind === 'tiempo'
+    ? `${num('min', 'min', 'Minutos')}<span class="muted small">min</span>${num('km', 'km', 'Kilómetros', '0.1', 'decimal')}<span class="muted small">km</span>`
+    : `${num('sets', 'series', 'Series')}×${num('reps', 'reps', 'Repeticiones')}${num('kg', kind === 'corporal' ? '+kg' : 'kg', 'Kilos', '0.5', 'decimal')}<span class="muted small">kg</span>`;
+  return `
+    <li class="${x.done ? 'done' : ''}">
+      <input type="checkbox" data-action="toggle-ex" data-i="${i}" ${x.done ? 'checked' : ''} aria-label="Hecho">
+      <div class="grow">
+        <div class="name">${esc(x.name)}</div>
+        ${lib?.notes ? `<div class="muted small notes">📝 ${esc(lib.notes)}</div>` : ''}
+        ${lastHint(x.name, key)}
+        <div class="ex-sets">${inputs}</div>
+      </div>
+      <button class="icon danger" data-action="del-ex" data-i="${i}" title="Quitar">✕</button>
+    </li>`;
 }
 
 function lastHint(name, key) {
   const l = lastExercise(state, name, key);
   if (!l) return '';
-  const parts = [l.sets && l.reps ? `${l.sets}×${l.reps}` : l.reps ? `${l.reps} reps` : '', l.kg !== '' ? `${l.kg} kg` : ''].filter(Boolean);
+  const parts = [
+    l.sets && l.reps ? `${l.sets}×${l.reps}` : l.reps ? `${l.reps} reps` : '',
+    l.kg !== '' && l.kg != null ? `${l.kg} kg` : '',
+    l.min ? `${l.min} min` : '',
+    l.km ? `${l.km} km` : '',
+  ].filter(Boolean);
   return `<div class="muted small">Última vez (${esc(fmtShort(l.key))}): ${esc(parts.join(' · ') || '—')}. ¡Intenta superarla!</div>`;
 }
 
@@ -252,7 +268,54 @@ function phaseBadge(ph) {
 }
 
 function allExerciseNames() {
-  return [...new Set(state.types.flatMap((t) => t.exercises))].sort((a, b) => a.localeCompare(b, 'es'));
+  return state.exercises.map((x) => x.name).sort((a, b) => a.localeCompare(b, 'es'));
+}
+
+function exerciseOptions(exclude = []) {
+  return EXERCISE_GROUPS.map((g) => {
+    const items = state.exercises.filter((x) => x.group === g && !exclude.includes(x.name))
+      .sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    return items.length ? `<optgroup label="${esc(g)}">${items.map((x) => `<option value="${esc(x.name)}">${esc(x.name)}</option>`).join('')}</optgroup>` : '';
+  }).join('');
+}
+
+function exerciseDefaults(x) {
+  if (x.kind === 'tiempo') return x.min ? `${x.min} min` : '';
+  return x.sets && x.reps ? `${x.sets}×${x.reps}` : '';
+}
+
+function exerciseLibrary() {
+  const groups = EXERCISE_GROUPS.map((g) => {
+    const items = state.exercises.filter((x) => x.group === g).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    if (!items.length) return '';
+    return `
+      <div class="ex-group">
+        <h4>${esc(g)} <span class="muted small">(${items.length})</span></h4>
+        <ul class="list">${items.map((x) => `
+          <li data-exname="${esc(x.name.toLocaleLowerCase('es'))}">
+            <span>${KIND_ICON[x.kind] || ''}</span>
+            <div class="grow">
+              <div>${esc(x.name)}${x.custom ? ' <span class="tag">mío</span>' : ''}</div>
+              ${exerciseDefaults(x) || x.notes ? `<div class="muted small">${esc([exerciseDefaults(x), x.notes].filter(Boolean).join(' · '))}</div>` : ''}
+            </div>
+            <button class="icon" data-action="edit-exercise" data-id="${esc(x.id)}" aria-label="Editar">✏️</button>
+          </li>`).join('')}
+        </ul>
+      </div>`;
+  }).join('');
+  const mine = state.exercises.filter((x) => x.custom).length;
+  return `
+    <section class="card">
+      <details class="diet lib" ${openDiets.has('__lib') ? 'open' : ''} data-type="__lib">
+        <summary><b>📚 Mis ejercicios</b> <span class="muted small">· ${state.exercises.length} (${mine} creados por ti)</span></summary>
+        <div class="row" style="margin-top:8px">
+          <input class="grow" type="search" placeholder="Buscar ejercicio…" id="ex-search" aria-label="Buscar ejercicio">
+          <button class="primary" data-action="new-exercise">+ Crear</button>
+        </div>
+        ${groups}
+      </details>
+      <p class="muted small" style="margin-bottom:0">Crea tus propios ejercicios con su grupo muscular, tipo, series/reps por defecto y notas de técnica, y añádelos a tus entrenos.</p>
+    </section>`;
 }
 
 // ---------- Vista: Semana ----------
@@ -362,13 +425,15 @@ function renderTypes() {
           ${t.exercises.map((x, i) => `<span class="chip">${esc(x)}<button data-action="del-type-ex" data-type="${esc(t.id)}" data-i="${i}" aria-label="Quitar">✕</button></span>`).join('') || '<span class="muted small">Ninguno</span>'}
         </div>
         <div class="row" style="margin-top:8px">
-          <input class="grow" placeholder="Nuevo ejercicio" data-newex="${esc(t.id)}">
+          <select class="grow" data-newex="${esc(t.id)}" aria-label="Ejercicio">${exerciseOptions(t.exercises)}</select>
           <button data-action="add-type-ex" data-type="${esc(t.id)}">Añadir</button>
         </div>
+        <button class="small-btn" data-action="new-exercise" data-target="${esc(t.id)}" style="margin-top:8px">+ Crear ejercicio nuevo</button>
       </section>`;
   }).join('');
 
   return `
+    ${exerciseLibrary()}
     <p class="muted">Cada tipo de entrenamiento tiene sus propios objetivos de macros, su dieta por defecto y su lista de ejercicios.</p>
     ${cards}
     <button class="primary" data-action="add-type" style="width:100%">+ Nuevo tipo de entrenamiento</button>`;
@@ -744,6 +809,82 @@ function openEntryDialog(index = null) {
   $dialog.showModal();
 }
 
+function openExerciseDialog(id = null, target = null) {
+  const x = id ? state.exercises.find((e) => e.id === id) : { name: '', group: 'Otro', kind: 'peso', sets: 3, reps: 10, min: '', notes: '' };
+  const used = id ? state.types.filter((t) => t.exercises.includes(x.name)).map((t) => t.name) : [];
+  $dialogForm.innerHTML = `
+    <h2 style="margin-top:0">${id ? 'Editar ejercicio' : 'Nuevo ejercicio'}</h2>
+    <label>Nombre<input id="e-name" required value="${esc(x.name)}" placeholder="Ej. Hip thrust"></label>
+    <div class="row" style="margin-top:8px">
+      <label class="grow">Grupo muscular
+        <select id="e-group">${EXERCISE_GROUPS.map((g) => `<option ${g === x.group ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select>
+      </label>
+    </div>
+    <label style="margin-top:8px">Tipo
+      <select id="e-kind">${Object.entries(EXERCISE_KINDS).map(([k, l]) => `<option value="${k}" ${k === x.kind ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+    </label>
+    <div class="row" style="margin-top:8px" id="e-strength">
+      <label>Series<input id="e-sets" type="number" min="0" inputmode="numeric" value="${esc(x.sets)}"></label>
+      <label>Repeticiones<input id="e-reps" type="number" min="0" inputmode="numeric" value="${esc(x.reps)}"></label>
+    </div>
+    <div class="row" style="margin-top:8px" id="e-time">
+      <label>Minutos<input id="e-min" type="number" min="0" inputmode="numeric" value="${esc(x.min)}"></label>
+    </div>
+    <label style="margin-top:8px">Notas / técnica (opcional)
+      <textarea id="e-notes" rows="3" placeholder="Ej. Bajar en 3 s, pausa abajo, agarre neutro...">${esc(x.notes)}</textarea>
+    </label>
+    ${used.length ? `<p class="muted small">Se usa en: ${esc(used.join(', '))}.</p>` : ''}
+    <p class="small" id="e-error" style="color:var(--danger)"></p>
+    <div class="row" style="justify-content:space-between">
+      ${id ? '<button value="delete" class="danger" formnovalidate>Borrar</button>' : '<span></span>'}
+      <div class="row">
+        <button value="cancel" formnovalidate>Cancelar</button>
+        <button value="ok" class="primary">${id ? 'Guardar' : 'Crear'}</button>
+      </div>
+    </div>`;
+  const q = (sel) => $dialogForm.querySelector(sel);
+  const toggle = () => {
+    const time = q('#e-kind').value === 'tiempo';
+    q('#e-strength').hidden = time;
+    q('#e-time').hidden = !time;
+  };
+  q('#e-kind').onchange = toggle;
+  $dialogForm.oninput = null;
+  toggle();
+
+  const num = (sel) => (q(sel).value === '' ? '' : Number(q(sel).value));
+  $dialog.onclose = () => {
+    if ($dialog.returnValue === 'delete') {
+      if (confirm(`¿Borrar "${x.name}"? Se quitará de tus entrenos (tu historial se conserva).`)) {
+        deleteExercise(state, id);
+        commit();
+      }
+      return;
+    }
+    if ($dialog.returnValue !== 'ok') return;
+    const data = {
+      name: q('#e-name').value, group: q('#e-group').value, kind: q('#e-kind').value,
+      sets: num('#e-sets'), reps: num('#e-reps'), min: num('#e-min'), notes: q('#e-notes').value,
+    };
+    const err = saveExercise(state, data, id);
+    if (err) {
+      q('#e-error').textContent = err;
+      $dialog.returnValue = '';
+      $dialog.showModal();
+      return;
+    }
+    const name = data.name.trim();
+    if (target === 'day') ensureLog(state, currentDay).exercises.push(dayExercise(state, name));
+    else if (target) {
+      const t = findType(state, target);
+      if (t && !t.exercises.includes(name)) t.exercises.push(name);
+    }
+    commit();
+  };
+  $dialog.returnValue = '';
+  $dialog.showModal();
+}
+
 function openFoodDialog() {
   $dialogForm.innerHTML = `
     <h2 style="margin-top:0">Nuevo alimento</h2>
@@ -886,7 +1027,7 @@ $view.addEventListener('click', (ev) => {
       const l = log();
       const existing = new Set(l.exercises.map((x) => x.name));
       for (const name of t.exercises) {
-        if (!existing.has(name)) l.exercises.push({ id: uid(), name, sets: '', reps: '', kg: '', done: false });
+        if (!existing.has(name)) l.exercises.push(dayExercise(state, name, true));
       }
       commit();
       break;
@@ -895,7 +1036,7 @@ $view.addEventListener('click', (ev) => {
       const input = document.getElementById('new-ex');
       const name = input.value.trim();
       if (!name) return;
-      log().exercises.push({ id: uid(), name, sets: '', reps: '', kg: '', done: false });
+      log().exercises.push(dayExercise(state, name));
       commit();
       document.getElementById('new-ex')?.focus();
       break;
@@ -923,12 +1064,14 @@ $view.addEventListener('click', (ev) => {
     case 'add-type-ex': {
       const input = $view.querySelector(`[data-newex="${CSS.escape(el.dataset.type)}"]`);
       const name = input.value.trim();
-      if (!name) return;
+      if (!name || type().exercises.includes(name)) return;
       type().exercises.push(name);
       commit();
       break;
     }
     case 'del-type-ex': type().exercises.splice(i, 1); commit(); break;
+    case 'new-exercise': openExerciseDialog(null, el.dataset.target || null); break;
+    case 'edit-exercise': openExerciseDialog(el.dataset.id); break;
     case 'goto-day': currentDay = el.dataset.key; tab = 'hoy'; render(); window.scrollTo(0, 0); break;
     case 'new-food': openFoodDialog(); break;
     case 'del-food': state.foods = state.foods.filter((f) => f.id !== el.dataset.id); commit(); break;
@@ -1013,6 +1156,13 @@ $view.addEventListener('change', (ev) => {
     else t.perKg[f] = Math.max(0, Number(el.value) || 0);
     return commit();
   }
+});
+
+$view.addEventListener('input', (ev) => {
+  if (ev.target.id !== 'ex-search') return;
+  const q = ev.target.value.trim().toLocaleLowerCase('es');
+  $view.querySelectorAll('.lib li[data-exname]').forEach((li) => { li.hidden = q && !li.dataset.exname.includes(q); });
+  $view.querySelectorAll('.lib .ex-group').forEach((g) => { g.hidden = !g.querySelector('li:not([hidden])'); });
 });
 
 $view.addEventListener('toggle', (ev) => {
