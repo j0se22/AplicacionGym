@@ -23,11 +23,15 @@
   }
 }
 
-* { box-sizing: border-box; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html { -webkit-text-size-adjust: 100%; background: #1b1f3b; }
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, sans-serif;
+  min-height: 100vh;
+  overscroll-behavior-y: none;
   background: var(--bg);
   color: var(--text);
   padding-bottom: calc(72px + env(safe-area-inset-bottom));
@@ -36,11 +40,15 @@ body {
 .topbar {
   position: sticky; top: 0; z-index: 5;
   background: #1b1f3b; color: #fff;
-  padding: 12px 16px;
+  /* deja sitio a la isla dinámica / notch en modo pantalla completa */
+  padding: calc(12px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 12px calc(16px + env(safe-area-inset-left));
 }
 .topbar h1 { margin: 0; font-size: 1.15rem; }
 
-main { max-width: 720px; margin: 0 auto; padding: 16px; }
+main {
+  max-width: 720px; margin: 0 auto;
+  padding: 16px calc(16px + env(safe-area-inset-right)) 16px calc(16px + env(safe-area-inset-left));
+}
 
 .card {
   background: var(--card);
@@ -59,7 +67,7 @@ main { max-width: 720px; margin: 0 auto; padding: 16px; }
 .small { font-size: .8rem; }
 
 button, .btn {
-  font: inherit; cursor: pointer;
+  font: inherit; cursor: pointer; touch-action: manipulation;
   border: 1px solid var(--border); background: var(--card); color: var(--text);
   padding: 8px 12px; border-radius: 10px;
 }
@@ -69,12 +77,24 @@ button.icon { padding: 6px 9px; line-height: 1; }
 button:disabled { opacity: .5; cursor: default; }
 
 input, select {
-  font: inherit; color: var(--text); background: var(--bg);
+  /* 16px evita que Safari en iPhone haga zoom al tocar un campo */
+  font: inherit; font-size: 16px; color: var(--text); background: var(--bg);
+  -webkit-appearance: none; appearance: none;
   border: 1px solid var(--border); border-radius: 10px;
   padding: 8px 10px; min-width: 0;
 }
 input[type="number"] { width: 5.5em; }
 input[type="color"] { padding: 2px; width: 44px; height: 38px; }
+input[type="checkbox"] {
+  -webkit-appearance: checkbox; appearance: auto;
+  width: 22px; height: 22px; flex: none; accent-color: var(--accent);
+}
+select {
+  padding-right: 28px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 55%, calc(100% - 10px) 55%;
+  background-size: 5px 5px; background-repeat: no-repeat;
+}
 label { display: flex; flex-direction: column; gap: 4px; font-size: .85rem; color: var(--muted); }
 
 .datebar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
@@ -127,7 +147,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   padding-bottom: env(safe-area-inset-bottom);
 }
 .tabs button {
-  border: 0; border-radius: 0; background: none;
+  border: 0; border-radius: 0; background: none; min-height: 52px;
   display: flex; flex-direction: column; align-items: center; gap: 2px;
   font-size: 1.2rem; padding: 8px 0; color: var(--muted);
 }
@@ -144,3 +164,13 @@ dialog .fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
 dialog .fields input { width: 100%; }
 
 .empty { text-align: center; color: var(--muted); padding: 10px 0; font-size: .9rem; }
+
+.install-hint {
+  display: flex; gap: 10px; align-items: flex-start;
+  max-width: 720px; margin: 12px auto 0; padding: 12px 14px;
+  width: calc(100% - 32px);
+  background: var(--card); border: 1px solid var(--accent); border-radius: var(--radius);
+  font-size: .9rem;
+}
+.install-hint[hidden] { display: none; }
+.install-hint svg { vertical-align: -2px; color: var(--accent); }

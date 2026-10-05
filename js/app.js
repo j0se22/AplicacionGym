@@ -618,9 +618,33 @@ async function importData(file) {
   }
 }
 
+// ---------- iPhone: aviso para instalar ----------
+
+const HINT_KEY = 'aplicaciongym:hint-cerrado';
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent)
+  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = window.navigator.standalone === true
+  || window.matchMedia('(display-mode: standalone)').matches;
+
+function setupInstallHint() {
+  const hint = document.getElementById('install-hint');
+  let dismissed = false;
+  try { dismissed = localStorage.getItem(HINT_KEY) === '1'; } catch { /* sin almacenamiento */ }
+  if (!isIOS || isStandalone || dismissed) return;
+  hint.hidden = false;
+  document.getElementById('install-hint-close').addEventListener('click', () => {
+    hint.hidden = true;
+    try { localStorage.setItem(HINT_KEY, '1'); } catch { /* sin almacenamiento */ }
+  });
+}
+
 // ---------- Arranque ----------
 
 render();
+setupInstallHint();
+
+// Pide al navegador que no borre los datos (Safari puede limpiar webs no instaladas).
+navigator.storage?.persist?.().catch(() => {});
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js').catch(() => {});

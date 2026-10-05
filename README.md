@@ -1,8 +1,19 @@
 # AplicacionGym — Macros Gym
 
 Aplicación web (PWA) para registrar los **macros diarios** según el **tipo de entrenamiento** de cada día.
-Funciona en el móvil, se puede instalar en la pantalla de inicio y funciona sin conexión.
-No necesita servidor ni cuenta: los datos se guardan en el navegador.
+Pensada para **iPhone**: se instala desde Safari en la pantalla de inicio, se abre a pantalla completa
+como una app normal y funciona sin conexión. No necesita App Store, Mac ni cuenta: los datos se guardan en el iPhone.
+
+## Instalar en el iPhone
+
+1. Publica la app en una dirección HTTPS (por ejemplo GitHub Pages:
+   *Settings → Pages → Deploy from a branch*, rama `main`, carpeta `/`).
+2. Abre esa dirección en **Safari** en el iPhone.
+3. Toca **Compartir** (el cuadrado con la flecha) → **Añadir a pantalla de inicio**.
+4. Ábrela desde el icono **Macros Gym**.
+
+> Usa siempre la app desde el icono: así iOS conserva los datos. Haz de vez en cuando
+> *Ajustes → Exportar JSON* (puedes guardarlo en Archivos/iCloud) como copia de seguridad.
 
 ## Funcionalidades
 
@@ -25,7 +36,7 @@ npm start        # sirve la app en http://localhost:8080
 npm test         # pruebas de la lógica (node --test)
 ```
 
-También se puede publicar tal cual en GitHub Pages (son archivos estáticos).
+Son archivos estáticos: se pueden publicar tal cual en GitHub Pages, Netlify, etc.
 
 ## Estructura
 
@@ -35,5 +46,6 @@ css/styles.css    Estilos (modo claro/oscuro, diseño móvil)
 js/core.js        Lógica pura: cálculo de macros, fechas, plan semanal
 js/app.js         Interfaz y almacenamiento (localStorage)
 sw.js             Service worker para uso sin conexión
+icons/            Iconos PNG (apple-touch-icon para iPhone)
 test/             Pruebas unitarias
 ```
