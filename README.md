@@ -38,6 +38,10 @@ como una app normal y funciona sin conexión. No necesita App Store, Mac ni cuen
     (ingesta media − cambio de peso × 7700 kcal/kg) y te propone corregir los objetivos.
   - **Avisos**: descanso de dieta tras ~10 semanas de definición, duración máxima del mini-cut,
     peso objetivo alcanzado, ritmo demasiado rápido o lento.
+- **Mis ejercicios** (en Entrenos): biblioteca con buscador, agrupada por músculo. Crea tus propios
+  ejercicios con grupo muscular, tipo (con peso, peso corporal o cardio por tiempo), series/reps o
+  minutos por defecto y notas de técnica. Si renombras uno, se actualiza en tus rutinas y en tu
+  historial (no pierdes tus marcas); si lo borras, se quita de las rutinas pero el historial se conserva.
 - **Entrenos**: crea/edita tipos de entrenamiento (Pierna, Empuje, Tirón, Full body, Cardio, Descanso…),
   cada uno con sus macros en **gramos por kg de peso**, su **dieta por defecto** (editable) y su lista de ejercicios.
 - **Historial**: últimos 7/14/30/90 días con kcal consumidas vs objetivo, macros, ejercicios y medias.

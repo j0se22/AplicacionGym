@@ -115,6 +115,7 @@ export function defaultState() {
       weight: 75, sex: 'h', age: 30, height: 175, activity: 1.55,
       maintAdjust: 0, // corrección del mantenimiento (kcal/día) calculada con tus datos reales
     },
+    exercises: defaultExerciseLibrary(), // biblioteca de ejercicios (incluye los tuyos)
     phases: [], // historial de fases: volumen, definición...
     body: {}, // { 'YYYY-MM-DD': { w, waist, bf } }
     types,
@@ -230,6 +231,7 @@ export function normalizeState(raw) {
     weekPlan: { ...base.weekPlan, ...(raw.weekPlan || {}) },
     foods: Array.isArray(raw.foods) ? raw.foods : base.foods,
     logs: raw.logs && typeof raw.logs === 'object' ? raw.logs : {},
+    exercises: Array.isArray(raw.exercises) ? raw.exercises.filter((x) => x?.name) : defaultExerciseLibrary(),
     phases: Array.isArray(raw.phases) ? raw.phases.filter((ph) => GOALS[ph?.goal] && ph.start) : [],
     body: raw.body && typeof raw.body === 'object' ? { ...raw.body } : {},
   };
@@ -238,6 +240,16 @@ export function normalizeState(raw) {
     if (l) delete l.weight;
   }
   s.phases.sort((a, b) => a.start.localeCompare(b.start));
+  s.exercises = s.exercises.map((x) => ({
+    id: x.id || uid(),
+    name: String(x.name).trim(),
+    group: EXERCISE_GROUPS.includes(x.group) ? x.group : 'Otro',
+    kind: EXERCISE_KINDS[x.kind] ? x.kind : 'peso',
+    sets: x.sets ?? '', reps: x.reps ?? '', min: x.min ?? '',
+    notes: String(x.notes ?? ''),
+    custom: Boolean(x.custom),
+  }));
+
   s.types = s.types.map((t) => ({
     id: t.id || uid(),
     name: String(t.name || 'Sin nombre'),
@@ -256,6 +268,8 @@ export function normalizeState(raw) {
       exercises: Array.isArray(l.exercises) ? l.exercises : [],
     };
   }
+  // Cualquier ejercicio usado en una rutina debe existir en la biblioteca.
+  for (const t of s.types) for (const name of t.exercises) ensureExercise(s, name);
   return s;
 }
 
@@ -631,8 +645,9 @@ export function phaseAdvice(state, key = dateKey()) {
 export function lastExercise(state, name, beforeKey) {
   const keys = Object.keys(state.logs).filter((k) => k < beforeKey).sort().reverse();
   for (const k of keys) {
-    const x = state.logs[k].exercises?.find((e) => e.name === name && (e.kg !== '' || e.reps !== '' || e.sets !== ''));
-    if (x) return { key: k, sets: x.sets, reps: x.reps, kg: x.kg };
+    const x = state.logs[k].exercises?.find((e) => e.name === name
+      && (e.done || filled(e.kg) || filled(e.km) || (filled(e.reps) && !e.fromRoutine)));
+    if (x) return { key: k, sets: x.sets, reps: x.reps, kg: x.kg, min: x.min, km: x.km };
   }
   return null;
 }
@@ -640,4 +655,121 @@ export function lastExercise(state, name, beforeKey) {
 // Agua recomendada: ~35 ml por kg de peso (más si sudas mucho).
 export function waterTarget(weight) {
   return Math.round((weight * 35) / 250) * 250;
+}
+
+function filled(v) {
+  return v !== '' && v != null;
+}
+
+// ---------- Biblioteca de ejercicios ----------
+
+export const EXERCISE_GROUPS = [
+  'Pecho', 'Espalda', 'Hombro', 'Bíceps', 'Tríceps', 'Cuádriceps', 'Femoral y glúteo',
+  'Gemelo', 'Core', 'Cuerpo completo', 'Cardio', 'Movilidad', 'Otro',
+];
+
+export const EXERCISE_KINDS = {
+  peso: 'Con peso (series × reps × kg)',
+  corporal: 'Peso corporal (series × reps, lastre opcional)',
+  tiempo: 'Cardio / tiempo (minutos y km)',
+};
+
+const BASE_EXERCISES = [
+  ['Sentadilla', 'Cuádriceps', 'peso', 4, 8],
+  ['Prensa', 'Cuádriceps', 'peso', 3, 10],
+  ['Peso muerto rumano', 'Femoral y glúteo', 'peso', 3, 10],
+  ['Zancadas', 'Cuádriceps', 'peso', 3, 12],
+  ['Curl femoral', 'Femoral y glúteo', 'peso', 3, 12],
+  ['Gemelos', 'Gemelo', 'peso', 4, 15],
+  ['Press banca', 'Pecho', 'peso', 4, 8],
+  ['Press inclinado mancuernas', 'Pecho', 'peso', 3, 10],
+  ['Press militar', 'Hombro', 'peso', 4, 8],
+  ['Elevaciones laterales', 'Hombro', 'peso', 3, 15],
+  ['Fondos', 'Tríceps', 'corporal', 3, 10],
+  ['Extensión tríceps polea', 'Tríceps', 'peso', 3, 12],
+  ['Dominadas', 'Espalda', 'corporal', 4, 8],
+  ['Remo con barra', 'Espalda', 'peso', 4, 8],
+  ['Jalón al pecho', 'Espalda', 'peso', 3, 10],
+  ['Remo en polea baja', 'Espalda', 'peso', 3, 12],
+  ['Face pull', 'Hombro', 'peso', 3, 15],
+  ['Curl bíceps', 'Bíceps', 'peso', 3, 12],
+  ['Peso muerto', 'Espalda', 'peso', 3, 5],
+  ['Abdominales', 'Core', 'corporal', 3, 15],
+  ['Cinta', 'Cardio', 'tiempo', '', '', 20],
+  ['Bicicleta', 'Cardio', 'tiempo', '', '', 30],
+  ['Remo ergómetro', 'Cardio', 'tiempo', '', '', 15],
+  ['HIIT 20 min', 'Cardio', 'tiempo', '', '', 20],
+  ['Caminar', 'Cardio', 'tiempo', '', '', 45],
+  ['Estiramientos', 'Movilidad', 'tiempo', '', '', 15],
+];
+
+export function defaultExerciseLibrary() {
+  return BASE_EXERCISES.map(([name, group, kind, sets = '', reps = '', min = '']) => ({
+    id: uid(), name, group, kind, sets, reps, min, notes: '', custom: false,
+  }));
+}
+
+const norm = (n) => String(n).trim().toLocaleLowerCase('es');
+
+export function findExercise(state, name) {
+  return (state.exercises || []).find((x) => norm(x.name) === norm(name)) || null;
+}
+
+// Devuelve el ejercicio de la biblioteca o lo crea (como "Otro") si no existe.
+export function ensureExercise(state, name, extra = {}) {
+  const found = findExercise(state, name);
+  if (found) return found;
+  const x = {
+    id: uid(), name: String(name).trim(), group: 'Otro', kind: 'peso',
+    sets: '', reps: '', min: '', notes: '', custom: true, ...extra,
+  };
+  state.exercises = state.exercises || [];
+  state.exercises.push(x);
+  return x;
+}
+
+// Guarda un ejercicio nuevo o editado. Si cambia el nombre, se actualiza en las rutinas
+// y en el historial para no perder las marcas anteriores. Devuelve un error o null.
+export function saveExercise(state, data, id = null) {
+  const name = String(data.name || '').trim();
+  if (!name) return 'Ponle un nombre al ejercicio.';
+  const dup = findExercise(state, name);
+  if (dup && dup.id !== id) return `Ya existe un ejercicio llamado "${dup.name}".`;
+  const fields = {
+    name,
+    group: EXERCISE_GROUPS.includes(data.group) ? data.group : 'Otro',
+    kind: EXERCISE_KINDS[data.kind] ? data.kind : 'peso',
+    sets: data.sets ?? '', reps: data.reps ?? '', min: data.min ?? '',
+    notes: String(data.notes ?? '').trim(),
+  };
+  if (!id) {
+    state.exercises.push({ id: uid(), ...fields, custom: true });
+    return null;
+  }
+  const x = state.exercises.find((e) => e.id === id);
+  const old = x.name;
+  Object.assign(x, fields);
+  if (old !== name) {
+    for (const t of state.types) t.exercises = t.exercises.map((n) => (n === old ? name : n));
+    for (const l of Object.values(state.logs)) for (const e of l.exercises || []) if (e.name === old) e.name = name;
+  }
+  return null;
+}
+
+// Borra de la biblioteca y de las rutinas (el historial de días se conserva).
+export function deleteExercise(state, id) {
+  const x = state.exercises.find((e) => e.id === id);
+  if (!x) return;
+  state.exercises = state.exercises.filter((e) => e.id !== id);
+  for (const t of state.types) t.exercises = t.exercises.filter((n) => n !== x.name);
+}
+
+// Entrada de ejercicio para un día, con los valores por defecto de la biblioteca.
+export function dayExercise(state, name, fromRoutine = false) {
+  const x = ensureExercise(state, name);
+  return {
+    id: uid(), name: x.name, kind: x.kind,
+    sets: x.sets ?? '', reps: x.reps ?? '', kg: '', min: x.min ?? '', km: '',
+    done: false, fromRoutine,
+  };
 }
