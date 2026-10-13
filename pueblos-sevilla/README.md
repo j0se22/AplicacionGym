@@ -16,44 +16,81 @@ navegador, se abre a pantalla completa y funciona sin conexión.
 
 ## Funcionalidades
 
-- **Pueblos**: los 106 municipios con buscador (sin importar tildes), filtro por comarca y por estado
-  (valorados, sin valorar, 📌 quiero ir, ✅ visitados) y cuántos llevas valorados.
-- **Ficha del pueblo**: nota global, media de cada aspecto, todas las valoraciones con comentario y
-  recomendación (un bar, un plato, un alojamiento…), marcar «Quiero ir»/«Visitado», abrir en el mapa
-  y compartir la nota.
-- **Valorar**: estrellas por aspecto (puedes dejar sin puntuar lo que no conozcas; toca otra vez la
-  misma estrella para quitarla), comentario, recomendación, nombre y fecha. Se puede editar y borrar.
-- **Ranking**: los mejores pueblos en global o por aspecto (la mejor comida, la mejor gente…), de toda la
-  provincia o de una comarca. A igualdad de nota gana el que tiene más valoraciones.
-- **Mis valoraciones**: tus últimas valoraciones y tu lista de «Quiero ir».
-- **Compartir con amigos**: en *Ajustes → Exportar* mandas un archivo por WhatsApp, correo…; quien lo
-  *Importa* suma tus valoraciones a las suyas (sin duplicar ni borrar nada) y el ranking se recalcula.
+- **🏘️ Pueblos** — lista con buscador y filtros, o **🗺️ mapa** de la provincia con cada municipio coloreado
+  según su nota (o según tus visitas: visitado / quiero ir / pendiente). Se puede ampliar y tocar cada pueblo.
+- **Ficha del pueblo** — nota global y por aspecto, distancia a Sevilla, **📸 qué ver, 🍴 qué comer y
+  🎉 fiestas**, **📷 fotos** de las valoraciones, **📍 sitios recomendados** (bares, restaurantes,
+  alojamientos… con su nota y «cómo llegar»), «Quiero ir», «Visitado», añadir a la ruta y **🖼️ tarjeta**
+  (imagen lista para WhatsApp o Instagram).
+- **⭐ Valorar** — estrellas por aspecto, comentario, recomendación y hasta 6 fotos (se reducen para que ocupen poco).
+- **🏆 Ranking** — global, **🎯 Para ti** (según lo que más te importa, en Ajustes) o por aspecto; de toda la
+  provincia o de una comarca.
+- **🧭 Explorar**
+  - **🎲 Pueblo sorpresa**: elige uno al azar que no conozcas o de tu lista, a la distancia que quieras.
+  - **🚗 Rutas**: arma tu ruta (se ordena para hacer menos kilómetros saliendo de Sevilla) y ábrela en
+    Google Maps, o pide una **ruta sugerida de un día** por comarca.
+  - **🎉 Próximas fiestas** de los dos próximos meses. La Semana Santa, la Feria de Abril, el Corpus y el
+    Rocío se calculan con la fecha exacta de cada año.
+- **🛂 Pasaporte** — un sello por cada pueblo visitado, **logros** (10, 25, 50 y 106 pueblos, comarcas
+  completas, fotos, sitios…), tu lista «Quiero ir» y tus valoraciones.
+- **⚙️ Ajustes** — tu nombre, tus prioridades, valoraciones compartidas, exportar/importar.
 
-### Cómo se calcula la nota
+## 🌍 Valoraciones compartidas (Supabase, gratis)
+
+Sin configurar nada, cada móvil guarda sus datos y se pueden compartir con *Ajustes → Exportar/Importar*.
+Para que **todos veáis las valoraciones, sitios y fotos de todos automáticamente**:
+
+1. Crea una cuenta y un proyecto en [supabase.com](https://supabase.com) (el plan gratuito sobra).
+2. En **Authentication → Sign In / Providers**, activa **Allow anonymous sign-ins**.
+3. En **SQL Editor → New query**, pega el contenido de [`supabase.sql`](supabase.sql) y pulsa **Run**.
+   Crea las tablas, la carpeta de fotos y las reglas de seguridad.
+4. En **Project Settings → API** copia la **Project URL** y la clave **anon public**.
+5. En la app, *Ajustes → Valoraciones compartidas*, pega los dos datos y pulsa **Conectar**.
+   Pásale esos dos datos a tus amigos para que hagan lo mismo.
+
+Cómo funciona: cada móvil entra con una sesión anónima (sin registrarse). Todo el mundo puede **leer**
+todo, pero cada móvil solo puede **editar y borrar lo suyo** (lo impone la base de datos, no la app).
+Lo que hagas sin conexión se sube la próxima vez que abras la app con internet. La clave *anon* es pública
+por diseño; la seguridad la dan las reglas de `supabase.sql`. Si reinstalas la app o borras los datos del
+navegador, tus valoraciones anteriores siguen publicadas pero ya no podrás editarlas desde ese móvil.
+
+## Cómo se calcula la nota
 
 - Nota de una valoración = media de los aspectos puntuados.
 - Nota global del pueblo = media de las notas de sus valoraciones (cada visita pesa igual).
 - Nota de un aspecto = media de ese aspecto en las valoraciones que lo puntúan.
+- Nota «para ti» = media de los aspectos del pueblo ponderada por tus prioridades (0 a 3).
 
-Los datos se guardan en el móvil (`localStorage`). Para que todo el mundo vea las valoraciones de todos
-en tiempo real haría falta un servidor (por ejemplo Firebase o Supabase); es el siguiente paso natural.
+## Datos
+
+- Contornos de los municipios: Instituto Geográfico Nacional (vía [es-atlas](https://www.npmjs.com/package/es-atlas)).
+- Coordenadas: INE (vía [spanish-cities-info](https://www.npmjs.com/package/spanish-cities-info)).
+  Las distancias son en línea recta.
+- Qué ver, qué comer y fiestas (`js/info.js`): selección orientativa para 55 pueblos; se puede ampliar.
 
 ## Uso en desarrollo
 
 ```bash
 npm start        # sirve la app en http://localhost:8081
-npm test         # pruebas de la lógica (node --test)
+npm test         # pruebas (lógica, mapa, rutas, fiestas y sincronización con un Supabase simulado)
 ```
+
+Para regenerar el mapa: ver las instrucciones al principio de `tools/build-geo.mjs`.
 
 ## Estructura
 
 ```
-index.html        Estructura de la app
-css/styles.css    Estilos (modo claro/oscuro, diseño móvil)
-js/data.js        Los 106 municipios agrupados por comarca
-js/core.js        Lógica pura: medias, ranking, búsqueda, importación
-js/app.js         Interfaz y almacenamiento (localStorage)
-sw.js             Service worker para uso sin conexión
-icons/            Iconos PNG (apple-touch-icon para iPhone)
-test/             Pruebas unitarias
+index.html          Estructura de la app
+css/styles.css      Estilos (modo claro/oscuro, diseño móvil)
+js/data.js          Los 106 municipios agrupados por comarca
+js/geo.js           Coordenadas y contornos del mapa (generado)
+js/info.js          Qué ver, qué comer y fiestas; cálculo de la Semana Santa
+js/core.js          Lógica pura: notas, ranking, rutas, logros, fiestas, unión de datos
+js/photos.js        Fotos en el móvil (IndexedDB)
+js/sync.js          Valoraciones compartidas con Supabase (API REST)
+js/app.js           Interfaz
+supabase.sql        Tablas y reglas de seguridad para Supabase
+tools/build-geo.mjs Generador de js/geo.js
+sw.js               Service worker para uso sin conexión
+test/               Pruebas
 ```
