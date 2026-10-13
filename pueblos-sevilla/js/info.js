@@ -2,6 +2,7 @@
 // No está completa: solo se incluye lo más conocido. Las fechas de fiestas son aproximadas
 // (mes) salvo las que dependen de la Semana Santa, que se calculan cada año.
 //   ver: lugares imprescindibles · comer: productos o platos típicos
+//   rutas: { name, desc } senderos y paseos conocidos
 //   fiestas: { name, month } o { name, easter: [desde, hasta] } (días respecto al Domingo de Resurrección)
 
 export const INFO = {
@@ -112,8 +113,8 @@ export const INFO = {
     fiestas: [{ name: 'Paso de las hermandades del Rocío', easter: [44, 46] }],
   },
   aznalcazar: { ver: ['Puerta de Doñana', 'Pinares de Aznalcázar'] },
-  'isla-mayor': { ver: ['Marismas del Guadalquivir', 'Dehesa de Abajo'], comer: ['Arroz', 'Cangrejo de río'] },
-  'la-puebla-del-rio': { ver: ['Cañada de los Pájaros', 'Marismas'] },
+  'isla-mayor': { ver: ['Marismas del Guadalquivir', 'Arrozales'], comer: ['Arroz', 'Cangrejo de río'] },
+  'la-puebla-del-rio': { ver: ['Cañada de los Pájaros', 'Reserva de la Dehesa de Abajo', 'Marismas'] },
   'coria-del-rio': { ver: ['Estatua de Hasekura Tsunenaga (vínculo con Japón)', 'Paseo del río'], comer: ['Albures y pescado de río'] },
   'los-palacios-y-villafranca': { comer: ['Tomate de Los Palacios'] },
   'el-palmar-de-troya': { ver: ['Basílica palmariana'] },
@@ -138,6 +139,32 @@ export const INFO = {
   },
   'la-algaba': { ver: ['Torre de los Guzmanes'] },
 };
+
+// Senderos y paseos conocidos (orientativo).
+const RUTAS = {
+  'san-nicolas-del-puerto': [
+    { name: 'Sendero del Cerro del Hierro', desc: 'Circular entre las formaciones kársticas de una antigua mina de hierro.' },
+    { name: 'Sendero de la Ribera del Huéznar', desc: 'Junto al río, con las cascadas del Huéznar.' },
+    { name: 'Vía Verde de la Sierra Norte', desc: 'Antiguo trazado de tren, llano y apto para bici.' },
+  ],
+  'cazalla-de-la-sierra': [{ name: 'Vía Verde de la Sierra Norte', desc: 'Sale de la estación de Cazalla-Constantina hacia el Cerro del Hierro.' }],
+  constantina: [{ name: 'Sendero de Los Castañares', desc: 'Entre castaños, junto al pueblo. Precioso en otoño.' }],
+  coripe: [{ name: 'Vía Verde de la Sierra', desc: 'Antigua vía de tren entre Puerto Serrano y Olvera; pasa por el Chaparro de la Vega.' }],
+  'alcala-de-guadaira': [{ name: 'Ruta de los Molinos del Guadaíra', desc: 'Por la ribera del río y el Parque de Oromana.' }],
+  'almaden-de-la-plata': [
+    { name: 'Vía de la Plata', desc: 'Etapa del Camino de Santiago por la sierra.' },
+    { name: 'Subida al Cerro del Calvario', desc: 'Corta, con vistas al pueblo y la sierra.' },
+  ],
+  'el-real-de-la-jara': [{ name: 'Vía de la Plata', desc: 'Etapa del Camino de Santiago hacia Extremadura.' }],
+  algamitas: [{ name: 'Subida a El Terril', desc: 'El techo de la provincia de Sevilla. Exigente, con vistas enormes.' }],
+  aznalcazar: [{ name: 'Pinares de Aznalcázar y Vado del Quema', desc: 'Por el pinar, en el camino del Rocío.' }],
+  'la-puebla-del-rio': [{ name: 'Dehesa de Abajo', desc: 'Paseo con observatorios de aves junto a la marisma.' }],
+  lantejuela: [{ name: 'Paseo por las lagunas', desc: 'Observación de aves en la reserva natural.' }],
+  estepa: [{ name: 'Subida al Cerro de San Cristóbal', desc: 'Del casco histórico a la Torre de la Victoria y el «Balcón de Andalucía».' }],
+  osuna: [{ name: 'Paseo a Las Canteras', desc: 'Antiguas canteras de piedra a las afueras del pueblo.' }],
+  sevilla: [{ name: 'Ribera del Guadalquivir y Parque del Alamillo', desc: 'Paseo llano junto al río, a pie o en bici.' }],
+};
+for (const [id, rutas] of Object.entries(RUTAS)) INFO[id] = { ...INFO[id], rutas };
 
 // Domingo de Resurrección (algoritmo de Meeus/Jones/Butcher).
 export function easterSunday(year) {

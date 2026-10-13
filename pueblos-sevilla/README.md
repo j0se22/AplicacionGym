@@ -22,6 +22,14 @@ navegador, se abre a pantalla completa y funciona sin conexión.
   🎉 fiestas**, **📷 fotos** de las valoraciones, **📍 sitios recomendados** (bares, restaurantes,
   alojamientos… con su nota y «cómo llegar»), «Quiero ir», «Visitado», añadir a la ruta y **🖼️ tarjeta**
   (imagen lista para WhatsApp o Instagram).
+- **📅 Plan para un día** en cada pueblo: desayuno, qué ver, ruta, comida, tarde y (si está lejos) dónde dormir.
+  Usa primero lo que recomienda la gente, después los sitios del mapa y, si no hay nada, un consejo.
+- **✨ Recomendaciones** en cada pueblo, por apartados: ☕ desayunar, 🍽️ comer, 🛏️ dormir, 🥾 rutas y 📸 ver.
+  - **👍 Recomendado por la gente**: los sitios que habéis recomendado y puntuado, los mejores primero.
+  - **🗺️ En el mapa**: cafeterías, panaderías, bares, restaurantes, alojamientos, miradores y senderos reales
+    del pueblo según **OpenStreetMap** (con horario y distancia cuando los hay). Con ⭐ lo puntúas y pasa a
+    «recomendado por la gente». Se descargan desde el móvil al abrir la ficha y se guardan una semana.
+  - Rutas conocidas (14 pueblos) y botón «Buscar más» en Google Maps o Wikiloc.
 - **⭐ Valorar** — estrellas por aspecto, comentario, recomendación y hasta 6 fotos (se reducen para que ocupen poco).
 - **🏆 Ranking** — global, **🎯 Para ti** (según lo que más te importa, en Ajustes) o por aspecto; de toda la
   provincia o de una comarca.
@@ -54,6 +62,10 @@ Lo que hagas sin conexión se sube la próxima vez que abras la app con internet
 por diseño; la seguridad la dan las reglas de `supabase.sql`. Si reinstalas la app o borras los datos del
 navegador, tus valoraciones anteriores siguen publicadas pero ya no podrás editarlas desde ese móvil.
 
+## Actualizaciones
+
+Cuando se publica una versión nueva, la app la descarga sola y se recarga la siguiente vez que la abres.
+
 ## Cómo se calcula la nota
 
 - Nota de una valoración = media de los aspectos puntuados.
@@ -66,7 +78,9 @@ navegador, tus valoraciones anteriores siguen publicadas pero ya no podrás edit
 - Contornos de los municipios: Instituto Geográfico Nacional (vía [es-atlas](https://www.npmjs.com/package/es-atlas)).
 - Coordenadas: INE (vía [spanish-cities-info](https://www.npmjs.com/package/spanish-cities-info)).
   Las distancias son en línea recta.
-- Qué ver, qué comer y fiestas (`js/info.js`): selección orientativa para 55 pueblos; se puede ampliar.
+- Qué ver, qué comer, rutas y fiestas (`js/info.js`): selección orientativa; se puede ampliar.
+- Bares, restaurantes, alojamientos y senderos: © colaboradores de [OpenStreetMap](https://www.openstreetmap.org/copyright),
+  consultados en directo con la API de Overpass. No están valorados: la nota la ponéis vosotros.
 
 ## Uso en desarrollo
 
@@ -86,6 +100,7 @@ js/data.js          Los 106 municipios agrupados por comarca
 js/geo.js           Coordenadas y contornos del mapa (generado)
 js/info.js          Qué ver, qué comer y fiestas; cálculo de la Semana Santa
 js/core.js          Lógica pura: notas, ranking, rutas, logros, fiestas, unión de datos
+js/nearby.js        Sitios cercanos de OpenStreetMap (Overpass)
 js/photos.js        Fotos en el móvil (IndexedDB)
 js/sync.js          Valoraciones compartidas con Supabase (API REST)
 js/app.js           Interfaz

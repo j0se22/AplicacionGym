@@ -17,11 +17,11 @@ const TABLES = {
   places: {
     toRow: (p) => ({
       id: p.id, town_id: p.townId, name: p.name, kind: p.kind, score: p.score, note: p.note,
-      author: p.author, updated_at: p.updatedAt,
+      author: p.author, osm: p.osm, updated_at: p.updatedAt,
     }),
     fromRow: (row, me) => ({
       id: row.id, townId: row.town_id, name: row.name, kind: row.kind, score: row.score, note: row.note,
-      author: row.author, updatedAt: Number(row.updated_at), mine: row.user_id === me,
+      author: row.author, osm: row.osm, updatedAt: Number(row.updated_at), mine: row.user_id === me,
     }),
   },
 };

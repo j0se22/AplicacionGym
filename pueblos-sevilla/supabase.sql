@@ -22,12 +22,19 @@ create table if not exists public.places (
   user_id uuid not null default auth.uid() references auth.users on delete cascade,
   town_id text not null check (char_length(town_id) <= 64),
   name text not null check (char_length(name) between 1 and 80),
-  kind text not null check (kind in ('comer', 'dormir', 'ver', 'otro')),
+  kind text not null check (kind in ('desayunar', 'comer', 'dormir', 'ruta', 'ver', 'otro')),
   score int check (score between 1 and 5),
   note text not null default '' check (char_length(note) <= 500),
   author text not null default '' check (char_length(author) <= 40),
   updated_at bigint not null
 );
+
+-- Cambios para quien ya había creado las tablas con una versión anterior (no pasa nada si se repite).
+alter table public.places add column if not exists osm text not null default ''
+  check (osm ~ '^((node|way|relation)/[0-9]{1,15})?$');
+alter table public.places drop constraint if exists places_kind_check;
+alter table public.places add constraint places_kind_check
+  check (kind in ('desayunar', 'comer', 'dormir', 'ruta', 'ver', 'otro'));
 
 alter table public.reviews enable row level security;
 alter table public.places enable row level security;
