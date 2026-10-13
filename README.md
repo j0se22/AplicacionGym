@@ -4,6 +4,9 @@ Aplicación web (PWA) para registrar los **macros diarios** según el **tipo de 
 Pensada para **iPhone**: se instala desde Safari en la pantalla de inicio, se abre a pantalla completa
 como una app normal y funciona sin conexión. No necesita App Store, Mac ni cuenta: los datos se guardan en el iPhone.
 
+> En la carpeta [`pueblos-sevilla/`](pueblos-sevilla/) hay otra app: **Pueblos de Sevilla**, para puntuar
+> los pueblos de la provincia (comida, lugar, estancia, gente…).
+
 ## Instalar en el iPhone
 
 1. Publica la app en una dirección HTTPS (por ejemplo GitHub Pages:

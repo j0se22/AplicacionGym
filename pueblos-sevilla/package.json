@@ -1,0 +1,11 @@
+{
+  "name": "pueblos-sevilla",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Puntúa los pueblos de la provincia de Sevilla",
+  "scripts": {
+    "start": "python3 -m http.server 8081",
+    "test": "node --test test/*.test.js"
+  }
+}
