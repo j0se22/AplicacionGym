@@ -1,6 +1,6 @@
 // Service worker: cachea la app para que funcione sin conexión.
-const CACHE = 'pueblos-sevilla-v1';
-const ASSETS = ['./', 'index.html', 'css/styles.css', 'js/app.js', 'js/core.js', 'js/data.js', 'manifest.json', 'icon.svg', 'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png'];
+const CACHE = 'pueblos-sevilla-v2';
+const ASSETS = ['./', 'index.html', 'css/styles.css', 'js/app.js', 'js/core.js', 'js/data.js', 'js/geo.js', 'js/info.js', 'js/photos.js', 'js/sync.js', 'manifest.json', 'icon.svg', 'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
@@ -16,6 +16,7 @@ self.addEventListener('activate', (event) => {
 
 // Red primero (para recibir actualizaciones) y caché como respaldo sin conexión.
 self.addEventListener('fetch', (event) => {
+  // Solo los archivos de la app: las llamadas a Supabase y las fotos subidas van siempre a la red.
   if (event.request.method !== 'GET' || new URL(event.request.url).origin !== location.origin) return;
   event.respondWith(
     fetch(event.request)

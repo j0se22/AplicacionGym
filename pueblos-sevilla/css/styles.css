@@ -183,3 +183,87 @@ dialog h2 { margin: 0 0 4px; font-size: 1.1rem; }
   background: color-mix(in srgb, var(--albero) 25%, var(--card)); font-size: .9rem;
 }
 .install-hint[hidden] { display: none; }
+
+/* ---------- v2: mapa, explorar, pasaporte, fotos ---------- */
+:root { --map-empty: #e6dccd; }
+@media (prefers-color-scheme: dark) { :root { --map-empty: #3a2e30; } }
+
+.row.nowrap { flex-wrap: nowrap; }
+button.wide { width: 100%; }
+a.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.label { font-size: .85rem; color: var(--muted); margin: 10px 0 6px; }
+.card h3 { margin: 14px 0 6px; font-size: .95rem; }
+
+.seg.two { margin: 0 0 14px; }
+.seg.two button { flex: 1; }
+
+.map-card { padding: 12px; }
+.map-wrap {
+  margin: 10px -4px 0; overflow: auto; border-radius: 10px; max-height: 70vh;
+  background: color-mix(in srgb, var(--bg) 60%, var(--card)); -webkit-overflow-scrolling: touch;
+}
+#map { display: block; min-width: 100%; height: auto; }
+#map .province { fill: none; stroke: var(--text); stroke-width: 3; opacity: .5; }
+#map [data-town] { stroke: var(--card); stroke-width: 1.2; cursor: pointer; transition: opacity .15s; }
+#map [data-town]:hover { opacity: .8; }
+#map [data-town].sel { stroke: var(--text); stroke-width: 3; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: .78rem; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+.map-sel { padding: 0 8px; }
+
+.info ul { margin: 0; padding-left: 20px; }
+.info li { margin: 3px 0; }
+
+.photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 6px; margin-top: 8px; }
+.photos img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; background: var(--border); cursor: pointer; }
+.photos.edit { grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); margin: 0; }
+.thumb { position: relative; }
+.thumb button {
+  position: absolute; top: 3px; right: 3px; padding: 2px 6px; font-size: .75rem;
+  border-radius: 50%; background: rgb(0 0 0 / .6); color: #fff; border: 0;
+}
+.add-photo {
+  display: flex; align-items: center; justify-content: center; margin: 0;
+  aspect-ratio: 1; border: 2px dashed var(--border); border-radius: 8px; font-size: 1.6rem; cursor: pointer;
+}
+.photo-full { width: 100%; border-radius: 10px; display: block; }
+
+.surprise {
+  text-align: center; margin-top: 14px; padding: 16px; border-radius: 12px;
+  background: color-mix(in srgb, var(--albero) 20%, var(--card)); animation: pop .35s ease-out;
+}
+.surprise .big { font-size: 1.6rem; font-weight: 800; }
+@keyframes pop { from { transform: scale(.85); opacity: 0; } }
+
+.route { margin: 0; padding-left: 22px; }
+.route li { padding: 4px 0; }
+.route li .icon { float: right; padding: 2px 7px; }
+.fiesta { display: flex; gap: 12px; padding: 9px 0; border-top: 1px solid var(--border); }
+.fiesta:first-of-type { border-top: 0; }
+.fiesta .date { width: 4.6em; flex-shrink: 0; font-weight: 700; color: var(--accent); font-size: .9rem; }
+
+.stamps { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; margin-top: 6px; }
+.stamp {
+  aspect-ratio: 1; border-radius: 50%; border: 3px double var(--accent); color: var(--accent);
+  background: none; padding: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  transform: rotate(var(--rot)); text-align: center; line-height: 1.1;
+}
+.stamp-name { font-weight: 800; font-size: .74rem; text-transform: uppercase; letter-spacing: .02em; }
+.stamp-date { font-size: .62rem; margin-top: 4px; opacity: .8; }
+
+.logro { display: flex; gap: 12px; align-items: flex-start; padding: 9px 0; border-top: 1px solid var(--border); opacity: .75; }
+.logro.done { opacity: 1; }
+.logro:first-of-type { border-top: 0; }
+.logro-icon { font-size: 1.6rem; filter: grayscale(1); }
+.logro.done .logro-icon { filter: none; }
+.logro .bar { margin-top: 6px; }
+.logro .row { gap: 8px; align-items: center; }
+
+.weight { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 0; }
+.weight .cat-name { width: auto; flex: 1; min-width: 0; }
+
+.sync-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--albero); margin-left: auto; opacity: 0; }
+.syncing .sync-dot { opacity: 1; animation: blink 1s infinite; }
+@keyframes blink { 50% { opacity: .2; } }
+.tabs button span { white-space: nowrap; }
+.hero button, .hero .btn { white-space: nowrap; }
