@@ -1,0 +1,16 @@
+{
+  "name": "Pueblos de Sevilla",
+  "short_name": "Pueblos SE",
+  "description": "Puntúa los pueblos de la provincia de Sevilla: comida, lugar, estancia, gente, fiestas…",
+  "lang": "es",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#faf6ef",
+  "theme_color": "#9e1b32",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
