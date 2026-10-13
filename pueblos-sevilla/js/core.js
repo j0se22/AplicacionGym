@@ -20,8 +20,10 @@ export const CATEGORY_IDS = CATEGORIES.map((c) => c.id);
 
 // Tipos de sitios recomendados dentro de un pueblo.
 export const PLACE_KINDS = [
-  { id: 'comer', name: 'Comer y tapear', icon: '🍷' },
+  { id: 'desayunar', name: 'Desayunar', icon: '☕' },
+  { id: 'comer', name: 'Comer y tapear', icon: '🍽️' },
   { id: 'dormir', name: 'Dormir', icon: '🛏️' },
+  { id: 'ruta', name: 'Ruta o paseo', icon: '🥾' },
   { id: 'ver', name: 'Ver y visitar', icon: '📸' },
   { id: 'otro', name: 'Otro', icon: '📍' },
 ];
@@ -123,6 +125,7 @@ export function normalizePlace(p) {
     score: validScore(p.score),
     note: text(p.note, 500),
     author: text(p.author, 40),
+    osm: /^(node|way|relation)\/\d{1,15}$/.test(p.osm ?? '') ? p.osm : '', // sitio de OpenStreetMap
     mine: p.mine !== false,
     synced: p.synced === true,
     updatedAt: Number(p.updatedAt) || Date.now(),
@@ -501,4 +504,61 @@ export function markSynced(state, done) {
     const gone = new Set(done.deleted?.[kind] ?? []);
     state.deleted[kind] = state.deleted[kind].filter((id) => !gone.has(id));
   }
+}
+
+// ---------- Recomendaciones y plan del día ----------
+
+// Sitios recomendados por la gente de un tipo, los mejor valorados primero.
+export function bestPlaces(state, townId, kinds) {
+  const list = Array.isArray(kinds) ? kinds : [kinds];
+  return townPlaces(state, townId).filter((p) => list.includes(p.kind));
+}
+
+// Itinerario sugerido para pasar un día en el pueblo.
+// Cada paso usa, por orden: lo recomendado por la gente, los sitios de OpenStreetMap
+// (nearby, opcional) y, si no hay nada, un consejo general.
+export function dayPlan(state, townId, nearby = null) {
+  const info = townInfo(townId);
+  const town = findTown(townId);
+  const pick = (kind) => {
+    const mine = bestPlaces(state, townId, kind)[0];
+    if (mine) return { name: mine.name, note: mine.note, score: mine.score, source: 'gente' };
+    const osm = nearby?.[kind]?.find((x) => x.kind === kind);
+    if (osm) return { name: osm.name, note: [osm.label, osm.cuisine].filter(Boolean).join(' · '), source: 'mapa', osm: osm.osm };
+    return null;
+  };
+  const ver = [...bestPlaces(state, townId, 'ver').map((p) => p.name), ...(info.ver ?? [])];
+  const rutas = [...bestPlaces(state, townId, 'ruta').map((p) => p.name), ...(info.rutas ?? []).map((r) => r.name),
+    ...(nearby?.ruta ?? []).map((r) => r.name)];
+  const typical = info.comer?.[0];
+
+  const steps = [];
+  const breakfast = pick('desayunar');
+  steps.push({
+    when: 'Mañana', icon: '☕', title: 'Desayuno',
+    place: breakfast, tip: breakfast ? '' : 'Un bar del centro: tostada con aceite de oliva y café.',
+  });
+  steps.push({
+    when: 'Mañana', icon: '📸', title: ver.length ? ver[0] : `Paseo por el centro de ${town.name}`,
+    tip: ver.length ? '' : 'La plaza del Ayuntamiento y la iglesia principal suelen ser lo más bonito.',
+  });
+  if (rutas.length) steps.push({ when: 'Mediodía', icon: '🥾', title: rutas[0], tip: 'Lleva agua y evita las horas de más calor.' });
+  const lunch = pick('comer');
+  steps.push({
+    when: 'Comida', icon: '🍽️', title: 'Comida', place: lunch,
+    tip: typical ? `Prueba: ${typical}.` : (lunch ? '' : 'Pregunta en el pueblo por la venta o el bar de siempre.'),
+  });
+  // Por la tarde, otra visita que no repita la ruta de la mañana.
+  const used = (rutas[0] ?? '').toLowerCase();
+  const afternoon = ver.slice(1).find((v) => !used.includes(v.toLowerCase()))
+    ?? (rutas.length || ver.length ? null : 'Mirador o paseo al atardecer');
+  if (afternoon) steps.push({ when: 'Tarde', icon: '🌅', title: afternoon, tip: '' });
+  if (kmFromSevilla(townId) >= 60) {
+    const sleep = pick('dormir');
+    steps.push({
+      when: 'Noche', icon: '🛏️', title: 'Dormir', place: sleep,
+      tip: sleep ? '' : `Está a ${Math.round(kmFromSevilla(townId))} km de Sevilla: merece la pena quedarse.`,
+    });
+  }
+  return steps;
 }

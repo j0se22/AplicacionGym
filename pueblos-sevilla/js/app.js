@@ -3,8 +3,9 @@ import {
   townStats, townReviews, reviewScore, ranking, searchTowns, upsertReview, deleteReview, mergeImport,
   upsertPlace, deletePlace, townPlaces, shareText, stars, round1, todayKey, uid, weightOf, personalScore,
   kmFromSevilla, planRoute, suggestRoute, mapsRouteUrl, randomTown, passport, achievements, townInfo,
-  upcomingFiestas,
+  upcomingFiestas, dayPlan,
 } from './core.js';
+import { fetchNearby } from './nearby.js';
 import { COMARCAS } from './data.js';
 import { GEO, MAP_SIZE, PROVINCE_PATH } from './geo.js';
 import { townFiestas, fiestaRange } from './info.js';
@@ -31,7 +32,7 @@ let townId = null; // ficha abierta
 const ui = {
   query: '', comarca: '', mark: '', view: 'lista', mapMode: 'nota', mapZoom: 1, mapSel: null,
   rankCat: 'global', rankComarca: '', surprisePool: 'nuevo', surpriseKm: 0, surprise: null,
-  routeComarca: 'Sierra Norte', routeN: 3, syncStatus: '',
+  routeComarca: 'Sierra Norte', routeN: 3, syncStatus: '', recTab: 'desayunar', recAll: false,
 };
 
 const save = () => writeJSON(STORAGE_KEY, state);
@@ -209,7 +210,6 @@ function renderTown() {
   const town = findTown(townId);
   const stats = townStats(state, town.id);
   const reviews = townReviews(state, town.id);
-  const places = townPlaces(state, town.id);
   const mark = state.marks[town.id];
   const info = townInfo(town.id);
   const forYou = personalScore(state, stats);
@@ -239,6 +239,9 @@ function renderTown() {
       </div>
     </div>
 
+    <div class="card" id="plan">${planHtml(town)}</div>
+    <div class="card" id="recs">${recsHtml(town)}</div>
+
     ${allPhotos.length ? `<div class="card"><h2>📷 Fotos</h2>${photoThumbs(allPhotos)}</div>` : ''}
 
     ${info.ver || info.comer || info.fiestas ? `<div class="card info">
@@ -259,10 +262,6 @@ function renderTown() {
       }).join('')}
     </div>
 
-    <div class="card">
-      <div class="row between"><h2>📍 Sitios recomendados</h2><button class="icon" data-act="add-place" aria-label="Añadir sitio">＋</button></div>
-      ${places.map(placeCard).join('') || '<p class="muted">¿Un bar, un restaurante, un alojamiento? Añade el primero con ＋.</p>'}
-    </div>
 
     <div class="card">
       <div class="row between"><h2>Valoraciones</h2>
@@ -274,7 +273,8 @@ function renderTown() {
   hydratePhotos();
   const on = (sel, fn) => $view.querySelector(sel)?.addEventListener('click', fn);
   on('[data-act="rate"]', () => openReview({ townId: town.id }));
-  on('[data-act="add-place"]', () => openPlace({ townId: town.id }));
+  bindRecs(town);
+  loadNearby(town.id);
   on('[data-act="route"]', () => {
     route = inRoute ? route.filter((id) => id !== town.id) : [...route, town.id];
     saveRoute();
@@ -287,6 +287,118 @@ function renderTown() {
     if (state.marks[town.id] === m) delete state.marks[town.id];
     else state.marks[town.id] = m;
     commit();
+  }));
+}
+
+// ---------- Recomendaciones (gente + OpenStreetMap) y plan del día ----------
+
+const REC_TABS = [
+  { id: 'desayunar', icon: '☕', name: 'Desayunar', kinds: ['desayunar'], search: 'desayunar' },
+  { id: 'comer', icon: '🍽️', name: 'Comer', kinds: ['comer'], search: 'restaurantes y bares' },
+  { id: 'dormir', icon: '🛏️', name: 'Dormir', kinds: ['dormir'], search: 'alojamiento' },
+  { id: 'ruta', icon: '🥾', name: 'Rutas', kinds: ['ruta'], search: null },
+  { id: 'ver', icon: '📸', name: 'Ver y más', kinds: ['ver', 'otro'], search: 'qué ver' },
+];
+
+const nearby = new Map(); // townId → { status: 'loading' | 'ok' | 'error', data }
+
+function loadNearby(id, force = false) {
+  if (nearby.has(id) && !force && nearby.get(id).status !== 'error') return;
+  nearby.set(id, { status: 'loading', data: nearby.get(id)?.data ?? null });
+  fetchNearby(id, { force })
+    .then(({ data }) => nearby.set(id, { status: 'ok', data }))
+    .catch(() => nearby.set(id, { status: 'error', data: null }))
+    .finally(() => refreshRecs(id));
+}
+
+// Repinta solo el plan y las recomendaciones (sin mover la página).
+function refreshRecs(id) {
+  if (townId !== id) return;
+  const town = findTown(id);
+  const plan = document.getElementById('plan');
+  const recs = document.getElementById('recs');
+  if (plan) plan.innerHTML = planHtml(town);
+  if (recs) { recs.innerHTML = recsHtml(town); bindRecs(town); }
+}
+
+const mapsSearch = (q) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+const fmtDist = (km) => (km < 1 ? `${Math.round(km * 10) * 100} m` : `${km.toLocaleString('es-ES', { maximumFractionDigits: 1 })} km`);
+
+function planHtml(town) {
+  const steps = dayPlan(state, town.id, nearby.get(town.id)?.data);
+  return `<h2>📅 Plan para un día en ${esc(town.name)}</h2>
+    <ol class="plan">${steps.map((s) => `<li>
+      <span class="when">${esc(s.when)}</span>
+      <div><b>${s.icon} ${esc(s.title)}</b>
+        ${s.place ? `<div>${esc(s.place.name)}${s.place.score ? ` · ⭐ ${s.place.score}` : ''}
+          <span class="muted small">${s.place.source === 'gente' ? '· recomendado por la gente' : '· según el mapa'}</span></div>
+          ${s.place.note ? `<div class="muted small">${esc(s.place.note)}</div>` : ''}` : ''}
+        ${s.tip ? `<div class="muted small">${esc(s.tip)}</div>` : ''}
+      </div>
+    </li>`).join('')}</ol>
+    <p class="muted small">Se ajusta solo con los sitios que recomendáis en la app.</p>`;
+}
+
+function recsHtml(town) {
+  const tab = REC_TABS.find((t) => t.id === ui.recTab) ?? REC_TABS[0];
+  const community = townPlaces(state, town.id).filter((p) => tab.kinds.includes(p.kind));
+  const known = new Set(community.flatMap((p) => [p.osm, p.name.toLowerCase()]).filter(Boolean));
+  const nb = nearby.get(town.id);
+  const osm = (nb?.data?.[tab.id] ?? []).filter((x) => !known.has(x.osm) && !known.has(x.name.toLowerCase()));
+  const shown = ui.recAll ? osm : osm.slice(0, 8);
+  const curated = tab.id === 'ruta' ? (townInfo(town.id).rutas ?? []) : [];
+  const more = tab.search
+    ? mapsSearch(`${tab.search} en ${town.name}, Sevilla`)
+    : `https://www.google.com/search?q=${encodeURIComponent(`rutas senderismo ${town.name} Sevilla wikiloc`)}`;
+
+  let mapPart;
+  if (!nb || nb.status === 'loading') mapPart = '<p class="muted small">Buscando sitios cercanos…</p>';
+  else if (nb.status === 'error') mapPart = '<p class="muted small">No se pudieron cargar los sitios del mapa (¿sin conexión?). <button class="link" data-act="retry-nearby">Reintentar</button></p>';
+  else if (!osm.length) mapPart = `<p class="muted small">No hay ${tab.id === 'ruta' ? 'rutas' : 'sitios de este tipo'} en el mapa cerca del pueblo.</p>`;
+  else {
+    mapPart = shown.map((x, i) => `<div class="osm-item">
+      <div class="grow">
+        <b>${esc(x.name)}</b>
+        <div class="muted small">${[x.label, x.cuisine, x.detail, x.dist != null ? fmtDist(x.dist) : ''].filter(Boolean).map(esc).join(' · ')}</div>
+        ${x.hours ? `<div class="small">🕒 ${esc(x.hours)}</div>` : ''}
+      </div>
+      <div class="row nowrap">
+        <button class="icon" data-rate-osm="${i}" aria-label="Recomendar">⭐</button>
+        <a class="btn icon" target="_blank" rel="noopener" href="${esc(x.website || mapsSearch(`${x.name}, ${town.name}`))}" aria-label="Abrir">${x.website ? '🌐' : '📍'}</a>
+      </div>
+    </div>`).join('') + (osm.length > shown.length ? `<button class="link" data-act="rec-all">Ver los ${osm.length} ›</button>` : '');
+  }
+
+  return `<h2>✨ Recomendaciones</h2>
+    <div class="seg">${REC_TABS.map((t) => `<button data-rec="${t.id}" class="${t.id === tab.id ? 'on' : ''}">${t.icon} ${t.name}</button>`).join('')}</div>
+    ${curated.length ? `<h3>Rutas conocidas</h3>${curated.map((r) => `<div class="osm-item"><div class="grow"><b>${esc(r.name)}</b><div class="muted small">${esc(r.desc)}</div></div>
+      <a class="btn icon" target="_blank" rel="noopener" href="${esc(`https://www.google.com/search?q=${encodeURIComponent(`${r.name} ${town.name} wikiloc`)}`)}" aria-label="Buscar">🔎</a></div>`).join('')}` : ''}
+    <h3>👍 Recomendado por la gente</h3>
+    ${community.map(placeCard).join('') || `<p class="muted small">Nadie ha recomendado nada aún. ¿Conoces ${tab.id === 'ruta' ? 'alguna ruta' : 'algún sitio'}? Recomiéndalo o puntúa uno de la lista.</p>`}
+    <h3>🗺️ En el mapa <span class="muted small">(OpenStreetMap, sin valorar)</span></h3>
+    ${mapPart}
+    <div class="row" style="margin-top:12px">
+      <button class="grow" data-act="add-place">＋ Recomendar</button>
+      <a class="btn grow center" target="_blank" rel="noopener" href="${esc(more)}">Buscar más ›</a>
+    </div>`;
+}
+
+function bindRecs(town) {
+  const root = document.getElementById('recs');
+  const tab = REC_TABS.find((t) => t.id === ui.recTab) ?? REC_TABS[0];
+  root.querySelectorAll('[data-rec]').forEach((b) => b.addEventListener('click', () => {
+    ui.recTab = b.dataset.rec;
+    ui.recAll = false;
+    refreshRecs(town.id);
+  }));
+  root.querySelector('[data-act="rec-all"]')?.addEventListener('click', () => { ui.recAll = true; refreshRecs(town.id); });
+  root.querySelector('[data-act="retry-nearby"]')?.addEventListener('click', () => { loadNearby(town.id, true); refreshRecs(town.id); });
+  root.querySelector('[data-act="add-place"]').addEventListener('click', () => openPlace({ townId: town.id, kind: tab.kinds[0] }));
+  root.querySelectorAll('[data-rate-osm]').forEach((b) => b.addEventListener('click', () => {
+    const known = new Set(townPlaces(state, town.id).flatMap((p) => [p.osm, p.name.toLowerCase()]).filter(Boolean));
+    const list = (nearby.get(town.id)?.data?.[tab.id] ?? []).filter((x) => !known.has(x.osm) && !known.has(x.name.toLowerCase()));
+    const x = list[Number(b.dataset.rateOsm)];
+    if (x) openPlace({ townId: town.id, name: x.name, kind: x.kind === 'ver' ? 'ver' : x.kind, osm: x.osm });
   }));
 }
 
@@ -425,12 +537,13 @@ function openPlace(place) {
   const editing = !!place.id;
   const town = findTown(place.townId);
   const values = place.score ? { score: place.score } : {};
+  const kindHint = { desayunar: 'Bar La Plaza: tostadas y churros', comer: 'Bar Casa Manolo', dormir: 'Casa rural El Olivar', ruta: 'Sendero del río', ver: 'Mirador del castillo' };
   openDialog(`
     <h2>${editing ? 'Editar sitio' : 'Recomendar un sitio'} · ${esc(town.name)}</h2>
-    <label>Nombre<input name="name" maxlength="80" required placeholder="Bar Casa Manolo" value="${esc(place.name)}"></label>
+    <label>Nombre<input name="name" maxlength="80" required placeholder="${esc(kindHint[place.kind] ?? 'Nombre del sitio')}" value="${esc(place.name)}"></label>
     <label>Tipo<select name="kind" style="width:100%">${PLACE_KINDS.map((k) => `<option value="${k.id}" ${k.id === place.kind ? 'selected' : ''}>${k.icon} ${k.name}</option>`).join('')}</select></label>
     <div class="rate"><span class="cat-name">Nota (opcional)</span>${starInput('score')}</div>
-    <label>Por qué lo recomiendas<textarea name="note" rows="3" maxlength="500" placeholder="Las mejores croquetas del pueblo…">${esc(place.note)}</textarea></label>
+    <label>Por qué lo recomiendas<textarea name="note" rows="3" maxlength="500" placeholder="${place.kind === 'ruta' ? 'Distancia, dificultad, por dónde empieza…' : 'Las mejores croquetas del pueblo…'}">${esc(place.note)}</textarea></label>
     <div class="row between" style="margin-top:12px">
       ${editing ? '<button type="button" class="danger" data-act="delete">Borrar</button>' : '<span></span>'}
       <div class="row nowrap">
@@ -450,7 +563,7 @@ function openPlace(place) {
     const f = new FormData($dialogForm);
     upsertPlace(state, {
       id: place.id ?? uid(), townId: town.id, name: f.get('name'), kind: f.get('kind'),
-      score: values.score ?? null, note: f.get('note'), author: state.author,
+      score: values.score ?? null, note: f.get('note'), author: state.author, osm: place.osm,
     });
     $dialog.close();
     commit();
@@ -679,7 +792,7 @@ function renderSettings() {
       <h2>Borrar todo</h2>
       <button class="danger" data-act="reset">Borrar todas las valoraciones de este móvil</button>
     </div>
-    <p class="muted small center">${TOWNS.length} municipios de la provincia de Sevilla.<br>Mapa: © Instituto Geográfico Nacional.</p>`;
+    <p class="muted small center">${TOWNS.length} municipios de la provincia de Sevilla.<br>Mapa: © Instituto Geográfico Nacional. Sitios: © colaboradores de OpenStreetMap.</p>`;
 
   document.getElementById('author').addEventListener('change', (e) => { state.author = e.target.value.trim(); save(); });
   $view.querySelectorAll('[data-weight]').forEach((s) => s.addEventListener('change', () => {
@@ -933,5 +1046,20 @@ if (isIOS && !isStandalone && !localStorage.getItem('pueblos-sevilla:hint')) {
 }
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  // Cuando se instala una versión nueva de la app, recarga para usarla (no en la primera instalación).
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloaded || $dialog.open) return;
+    reloaded = true;
+    location.reload();
+  });
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+    .then((reg) => {
+      // Al volver a la app (desde segundo plano) comprueba si hay versión nueva.
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') reg.update().catch(() => {});
+      });
+    })
+    .catch(() => {});
 }
